@@ -64,9 +64,31 @@ a. Describe the dataset with a couple of short sentences. What was its intended 
 
 <!-- DESCRIBE IT BELOW -->
 
-```{r}
-# load the data and preprocessing steps go here
-# 
+```{r get-data, eval=FALSE}
+# 1. Install Kaggle API if you haven’t yet
+if (system("which kaggle", ignore.stderr = TRUE) != 0) {
+  system("pip install kaggle")
+}
+
+# 2. Load your credentials from ~/.kaggle/kaggle.json
+library(jsonlite)
+creds <- fromJSON("~/.kaggle/kaggle.json")
+Sys.setenv(
+  KAGGLE_USERNAME = creds$barakazor,
+  KAGGLE_KEY      = creds$k22891584
+)
+
+# 3. Create a data/ directory (if needed) and download & unzip
+if (!dir.exists("data")) dir.create("data")
+system("kaggle datasets download -d prasertk/inflation-interest-and-unemployment-rate -p data --unzip")
+
+# 4. Read the CSV into R
+df_raw <- read.csv("data/inflation-interest-and-unemployment-rate.csv",
+                   stringsAsFactors = FALSE)
+
+# 5. Quick look
+dim(df_raw)
+str(df_raw)
 ```
 
 b. Report the number of observations, columns (with their meaning) and their data types. Indicate clearly what you will use as dependent variable/label. 
