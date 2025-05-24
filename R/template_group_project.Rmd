@@ -64,32 +64,98 @@ a. Describe the dataset with a couple of short sentences. What was its intended 
 
 <!-- DESCRIBE IT BELOW -->
 
-```{r get-data, eval=FALSE}
-# 1. Install Kaggle API if you haven’t yet
-if (system("which kaggle", ignore.stderr = TRUE) != 0) {
-  system("pip install kaggle")
+```{r get-data-direct, echo=TRUE, message=FALSE}
+# 0) Install & load httr for HTTP requests
+if (!requireNamespace("httr", quietly = TRUE)) {
+  install.packages("httr", repos = "https://cran.rstudio.com/")
 }
+library(httr)
 
-# 2. Load your credentials from ~/.kaggle/kaggle.json
-library(jsonlite)
-creds <- fromJSON("~/.kaggle/kaggle.json")
-Sys.setenv(
-  KAGGLE_USERNAME = creds$barakazor,
-  KAGGLE_KEY      = creds$k22891584
+# 1) Kaggle credentials
+user <- "barakazor"
+key  <- "6bfceda688e1452d09191636ad94eeeb"
+
+# 2) Determine working directory and prepare sub-directories
+wd        <- getwd()
+data_dir  <- file.path(wd, "data")
+input_dir <- file.path(wd, "Input_Data")
+if (!dir.exists(data_dir))  dir.create(data_dir,  recursive = TRUE)
+if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
+
+# 3) Download the ZIP via Kaggle REST API
+zip_path     <- file.path(data_dir, "inflation.zip")
+download_url <- "https://www.kaggle.com/api/v1/datasets/download/prasertk/inflation-interest-and-unemployment-rate"
+
+resp <- GET(
+  url             = download_url,
+  authenticate(user, key),
+  write_disk(zip_path, overwrite = TRUE),
+  config(followlocation = TRUE)
+)
+stop_for_status(resp)
+
+# 4) Unzip into data_dir
+unzipped <- unzip(zip_path, exdir = data_dir)
+csvs     <- unzipped[grepl("\\.csv$", unzipped)]
+if (length(csvs) == 0) stop("No CSV found in the downloaded ZIP.")
+
+# 5) Read the first CSV into R
+df_raw <- read.csv(csvs[1], stringsAsFactors = FALSE)
+
+# 6) Save the dataset into Input_Data/
+write.csv(
+  df_raw,
+  file      = file.path(input_dir, "df_raw.csv"),
+  row.names = FALSE
+)
+saveRDS(
+  df_raw,
+  file = file.path(input_dir, "df_raw.rds")
+)
+```
+
+
+```{```{r select-complete-countries, echo=TRUE, message=FALSE}
+library(dplyr)
+
+# 1) Rename the key columns
+df <- df_raw %>%
+  rename(
+    inflation    = Inflation..consumer.prices..annual...,
+    lending_int  = Lending.interest.rate....,
+    unemployment = Unemployment..total....of.total.labor.force...national.estimate.
+  )
+
+# 2) Filter to the years 2000–2020
+df_period <- df %>%
+  filter(year >= 2000, year <= 2020)
+
+# 3) Identify countries with a full panel (21 observations, no NAs)
+complete_countries <- df_period %>%
+  group_by(iso2c) %>%
+  summarise(
+    n_years = n_distinct(year),
+    missing = sum(is.na(inflation) | is.na(lending_int) | is.na(unemployment))
+  ) %>%
+  filter(n_years == 21, missing == 0) %>%
+  pull(iso2c)
+
+# 4) Subset to those countries
+df_sel <- df_period %>%
+  filter(iso2c %in% complete_countries)
+
+# 5) Report how many countries and observations
+message(
+  "Selected ", length(complete_countries), 
+  " countries with complete data; total observations = ", nrow(df_sel)
 )
 
-# 3. Create a data/ directory (if needed) and download & unzip
-if (!dir.exists("data")) dir.create("data")
-system("kaggle datasets download -d prasertk/inflation-interest-and-unemployment-rate -p data --unzip")
+# 6) Save for downstream use
+if (!dir.exists("Input_Data")) dir.create("Input_Data")
+saveRDS(df_sel, file = "Input_Data/df_selected.rds")
 
-# 4. Read the CSV into R
-df_raw <- read.csv("data/inflation-interest-and-unemployment-rate.csv",
-                   stringsAsFactors = FALSE)
-
-# 5. Quick look
-dim(df_raw)
-str(df_raw)
 ```
+
 
 b. Report the number of observations, columns (with their meaning) and their data types. Indicate clearly what you will use as dependent variable/label. 
 
@@ -104,10 +170,10 @@ a. Fit multiple appropriate models to the dataset (as many models as there are m
 
 <!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
 
-```{r, message = FALSE, results = "hide"}
+{r, message = FALSE, results = "hide"}
 # models go here
 
-```
+
 
 b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
 
@@ -117,7 +183,9 @@ b. Explain each model and describe its structure (what they assume about potenti
 
 a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
 
-```{r}
+```
+
+
 
 ```
 <!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
