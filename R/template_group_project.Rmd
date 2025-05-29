@@ -121,6 +121,32 @@ saveRDS(
 library(dplyr)
 library(lubridate)
 
+
+# Read and clean raw CSV
+df_raw <- read_csv(file.path(input_dir, "df_raw.csv")) %>%
+  clean_names()
+
+# Define rating levels and create ordered factor
+target_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+
+df <- df_raw %>%
+  mutate(
+    rating_ord  = factor(rating, levels = target_levels, ordered = TRUE),
+    sector      = fct_lump_n(sector, 10),    # keep top 10 sectors
+    corporation = as.factor(corporation),
+    fiscal_year = year(ymd(rating_date)) %>% as.factor()
+  ) %>%
+  # Z-score scale selected continuous ratios
+  mutate(across(
+    c(current_ratio, debt_equity_ratio, gross_margin,
+      operating_margin, net_profit_margin, roa_return_on_assets),
+    ~ as.numeric(scale(.x)),
+    .names = "z_{col}"
+  )) %>%
+  drop_na(rating_ord, sector, corporation)
+
 # 1. Filter for rating date in 2016 and select only the needed variables
 #    - binary_rating: Binary.Rating as DV
 #    - rating      : Rating as DV
