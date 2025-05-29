@@ -117,35 +117,39 @@ saveRDS(
 
 
 ```{r preprocess-2016, echo=TRUE, message=FALSE}
-# Ensure necessary packages are loaded
+# Load necessary packages (install if needed)
+library(readr)
 library(dplyr)
+library(janitor)
 library(lubridate)
 
+# Read raw data and clean column names explicitly
+input_dir <- file.path(wd, "Input_Data")   # adjust as needed
+df_raw <- read_csv(file.path(input_dir, "df_raw.csv"))
 
-# Read and clean raw CSV
-df_raw <- read_csv(file.path(input_dir, "df_raw.csv")) %>%
-  clean_names()
+# Use janitor::clean_names to ensure availability
+df_raw <- janitor::clean_names(df_raw)
 
-# Define rating levels and create ordered factor
-target_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+# Define ordered rating levels
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
                    "BBB+","BBB","BBB-","BB+","BB","BB-",
                    "B+","B","B-","CCC","CC","C","D")
 
+# Create df with fiscal_year and scaled predictors
 df <- df_raw %>%
   mutate(
-    rating_ord  = factor(rating, levels = target_levels, ordered = TRUE),
-    sector      = fct_lump_n(sector, 10),    # keep top 10 sectors
+    rating_ord  = factor(rating, levels = rating_levels, ordered = TRUE),
+    sector      = forcats::fct_lump_n(sector, 10),
     corporation = as.factor(corporation),
-    fiscal_year = year(ymd(rating_date)) %>% as.factor()
+    fiscal_year = lubridate::year(lubridate::ymd(rating_date))
   ) %>%
-  # Z-score scale selected continuous ratios
   mutate(across(
     c(current_ratio, debt_equity_ratio, gross_margin,
       operating_margin, net_profit_margin, roa_return_on_assets),
-    ~ as.numeric(scale(.x)),
-    .names = "z_{col}"
-  )) %>%
-  drop_na(rating_ord, sector, corporation)
+    ~ as.numeric(scale(.x)), .names = "z_{col}")) %>%
+  tidyr::drop_na(rating_ord, sector, corporation)
+
+
 
 # 1. Filter for rating date in 2016 and select only the needed variables
 #    - binary_rating: Binary.Rating as DV
@@ -202,7 +206,7 @@ b. Report the number of observations, columns (with their meaning) and their dat
 ## 2. Split the data and tranform columns as necessary. (0.5pt)
  Split the data into training (80%) and test set (80%). Transform the columns if necessary.
 
-```{r split-data, echo=TRUE, message=FALSE}
+```{r splitdata, echo=TRUE, message=FALSE}
 # Load required package for splitting
 # (dplyr already loaded)
 
@@ -232,6 +236,98 @@ test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Ra
 ## 3. Model Exploration (3pt)
 
 a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
+
+```{r hyperparamater, echo=TRUE, message=FALSE}
+# parbayes_opt.R
+# R script for Bayesian hyperparameter optimization using ParBayesianOptimization
+
+# 0. Install and load packages
+if (!requireNamespace("ParBayesianOptimization", quietly = TRUE)) {
+  install.packages("ParBayesianOptimization")
+}
+if (!requireNamespace("brms", quietly = TRUE)) {
+  install.packages("brms")
+}
+if (!requireNamespace("loo", quietly = TRUE)) {
+  install.packages("loo")
+}
+library(ParBayesianOptimization)
+library(brms)
+library(loo)
+
+# 1. Prepare training data
+# Ensure 'train_binary' exists
+if (!exists("train_binary")) {
+  train_binary <- read.csv("Input_Data/df_binary.csv")
+  train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+}
+
+# 2. Define the objective function with error handling
+# Returns a list with 'Score' to maximize (we use -LOOIC)
+obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
+  result <- tryCatch({
+    # Build dynamic priors as strings
+    priors <- c(
+      prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
+      prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
+    )
+
+    # Fit the brms model
+    fit <- brm(
+      formula = bf(
+        Binary.Rating ~ Current.Ratio +
+                        `Long.term.Debt...Capital` +
+                        Debt.Equity.Ratio +
+                        EBITDA.Margin +
+                        `Operating.Cash.Flow.Per.Share` +
+                        (1 | Sector)
+      ),
+      data    = train_binary,
+      family  = bernoulli(link = "logit"),
+      prior   = priors,
+      iter    = 1000,
+      warmup  = 500,
+      control = list(adapt_delta = adapt_delta),
+      cores   = 4,
+      refresh = 0
+    )
+
+    # Compute LOOIC
+    looic_val <- loo(fit)$estimates["looic", "Estimate"]
+    list(Score = -looic_val)
+  }, error = function(e) {
+    message("Objective error: ", e$message)
+    return(NULL)
+  })
+  return(result)
+}
+
+# 3. Define search bounds
+bounds <- list(
+  sigma_fixed = c(0.1, 10),
+  sigma_group = c(0.1, 5),
+  adapt_delta = c(0.8, 0.99)
+)
+
+# 4. Run Bayesian Optimization with progress reporting
+set.seed(123)
+opt_res <- bayesOpt(
+  FUN           = obj_fun,
+  bounds        = bounds,
+  initPoints    = 5,
+  iters.n       = 15,
+  acq           = "ucb",       # Upper confidence bound
+  kappa         = 2.576,         # exploration/exploitation trade-off
+  verbose       = 2,             # textual progress
+  plotProgress  = TRUE,          # acquisition plot
+  dropNull      = TRUE           # skip failed evaluations
+)
+
+# 5. Examine best hyperparameters
+best_params <- getBestPars(opt_res)
+print(best_params)
+```
+
 
 <!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
 
