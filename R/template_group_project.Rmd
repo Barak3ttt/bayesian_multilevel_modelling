@@ -75,16 +75,17 @@ library(httr)
 user <- "barakazor"
 key  <- "6bfceda688e1452d09191636ad94eeeb"
 
-# 2) Determine working directory and prepare sub-directories
+# 2) Define working and data directories
 wd        <- getwd()
 data_dir  <- file.path(wd, "data")
 input_dir <- file.path(wd, "Input_Data")
-if (!dir.exists(data_dir))  dir.create(data_dir,  recursive = TRUE)
+if (!dir.exists(data_dir))  dir.create(data_dir, recursive = TRUE)
 if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
 
 # 3) Download the ZIP via Kaggle REST API
-zip_path     <- file.path(data_dir, "inflation.zip")
-download_url <- "https://www.kaggle.com/api/v1/datasets/download/prasertk/inflation-interest-and-unemployment-rate"
+dataset_slug <- "kirtandelwadia/corporate-credit-rating-with-financial-ratios"
+zip_path     <- file.path(data_dir, "credit_rating.zip")
+download_url <- paste0("https://www.kaggle.com/api/v1/datasets/download/", dataset_slug)
 
 resp <- GET(
   url             = download_url,
@@ -102,7 +103,7 @@ if (length(csvs) == 0) stop("No CSV found in the downloaded ZIP.")
 # 5) Read the first CSV into R
 df_raw <- read.csv(csvs[1], stringsAsFactors = FALSE)
 
-# 6) Save the dataset into Input_Data/
+# 6) Save to Input_Data/
 write.csv(
   df_raw,
   file      = file.path(input_dir, "df_raw.csv"),
@@ -115,45 +116,56 @@ saveRDS(
 ```
 
 
-```{```{r select-complete-countries, echo=TRUE, message=FALSE}
+```{r preprocess-2016, echo=TRUE, message=FALSE}
+# Ensure necessary packages are loaded
 library(dplyr)
+library(lubridate)
 
-# 1) Rename the key columns
-df <- df_raw %>%
-  rename(
-    inflation    = Inflation..consumer.prices..annual...,
-    lending_int  = Lending.interest.rate....,
-    unemployment = Unemployment..total....of.total.labor.force...national.estimate.
+# 1. Filter for rating date in 2016 and select only the needed variables
+#    - binary_rating: Binary.Rating as DV
+#    - rating      : Rating as DV
+#    - current_ratio, long_term_debt_capital, debt_equity_ratio,
+#      ebitda_margin, operating_cash_flow_per_share, sector: predictors
+
+df_filtered <- df %>%
+  filter(fiscal_year == "2016") %>%
+  select(
+    binary_rating,
+    rating,
+    current_ratio,
+    long_term_debt_capital,
+    debt_equity_ratio,
+    ebitda_margin,
+    operating_cash_flow_per_share,
+    sector
   )
 
-# 2) Filter to the years 2000–2020
-df_period <- df %>%
-  filter(year >= 2000, year <= 2020)
+# 2. Create two dataframes with different target variables
+#    a) df_binary: Binary.Rating as the first column
+#    b) df_rating: Rating as the first column
 
-# 3) Identify countries with a full panel (21 observations, no NAs)
-complete_countries <- df_period %>%
-  group_by(iso2c) %>%
-  summarise(
-    n_years = n_distinct(year),
-    missing = sum(is.na(inflation) | is.na(lending_int) | is.na(unemployment))
-  ) %>%
-  filter(n_years == 21, missing == 0) %>%
-  pull(iso2c)
+df_binary <- df_filtered %>%
+  select(
+    Binary.Rating = binary_rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )
 
-# 4) Subset to those countries
-df_sel <- df_period %>%
-  filter(iso2c %in% complete_countries)
 
-# 5) Report how many countries and observations
-message(
-  "Selected ", length(complete_countries), 
-  " countries with complete data; total observations = ", nrow(df_sel)
-)
-
-# 6) Save for downstream use
-if (!dir.exists("Input_Data")) dir.create("Input_Data")
-saveRDS(df_sel, file = "Input_Data/df_selected.rds")
-
+df_rating <- df_filtered %>%
+  select(
+    Rating                          = rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )
 ```
 
 
@@ -163,6 +175,33 @@ b. Report the number of observations, columns (with their meaning) and their dat
 
 ## 2. Split the data and tranform columns as necessary. (0.5pt)
  Split the data into training (80%) and test set (80%). Transform the columns if necessary.
+
+```{r split-data, echo=TRUE, message=FALSE}
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+```
 
 ## 3. Model Exploration (3pt)
 
@@ -216,10 +255,7 @@ b. Determine the best model based on predictive accuracy and justify your decisi
 Choose one of the best models and interpret its most important parameters.
 
 <!-- INTERPRETATION AND CODE GOES HERE -->
-
-## 7. Report a loss function on the test set (Optional for bonus 0.5 to 1pt, depending on if you use RMSE or another function).
-
-Report RMSE or other loss (or utility) function on the test set. (Transform it back if necessary).
+ 
 
 
 # Contributions of each member 
