@@ -431,6 +431,108 @@ Explain what you conclude.
 
 <!-- EXPLAIN CONCLUSIONS -->
 
+c. Binary Classification Metrics from Ordinal Model
+
+While our primary model (`fit_cumulative_cloglog_intercepts`) predicts ordinal ratings, we can derive binary classification metrics by defining a threshold to group these ratings. For this exercise, we will classify ratings as either "Investment Grade" (AAA down to BBB-) or "Speculative Grade" (BB+ down to D).
+
+We will predict probabilities for each rating category on the test set, sum the probabilities for all investment grade categories, and then use a 0.5 probability threshold on this sum to make a binary prediction.
+
+```{r calculate-binary-metrics, echo=TRUE, message=FALSE, warning=FALSE}
+# Ensure the brms model object is available (it should be if the hyperparameter chunk ran)
+if (!exists("fit_cumulative_cloglog_intercepts")) {
+  stop("Model object 'fit_cumulative_cloglog_intercepts' not found. Please ensure the model fitting chunk has been run.")
+}
+
+# Ensure the test_rating dataset is available
+if (!exists("test_rating")) {
+  stop("Test dataset 'test_rating' not found. Please ensure the data splitting chunk has been run.")
+}
+
+# Load necessary library for metrics if not already loaded
+if (!requireNamespace("caret", quietly = TRUE)) {
+  install.packages("caret", repos = 'https://cran.rstudio.com/')
+}
+library(caret)
+
+# Define rating levels and investment grade threshold
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+investment_grade_ratings <- c("AAA","AA+","AA","AA-","A+","A","A-", "BBB+","BBB","BBB-")
+
+# Ensure Rating in test_rating is an ordered factor with correct levels
+test_rating$Rating <- factor(test_rating$Rating, levels = rating_levels, ordered = TRUE)
+
+# 1. Predict probabilities for each category on the test set
+# posterior_epred gives expected probabilities for each category
+# Using a smaller number of draws for faster execution during knitting, increase for more stable estimates.
+pred_probs_ordinal <- posterior_epred(fit_cumulative_cloglog_intercepts, newdata = test_rating, ndraws = 500) 
+
+# pred_probs_ordinal is an array: (draws, observations, categories)
+# We want the mean probability for each category for each observation
+mean_pred_probs_ordinal <- colMeans(pred_probs_ordinal) # Now (observations, categories)
+if(ncol(mean_pred_probs_ordinal) == length(rating_levels)){
+    colnames(mean_pred_probs_ordinal) <- rating_levels # Assign category names
+} else {
+    stop("Mismatch between number of predicted categories and length of rating_levels.")
+}
+
+
+# 2. Calculate the total probability of being investment grade for each observation
+prob_investment_grade <- rowSums(mean_pred_probs_ordinal[, intersect(colnames(mean_pred_probs_ordinal), investment_grade_ratings), drop = FALSE])
+
+# 3. Convert to binary predictions ("Investment" vs "Speculative") using a 0.5 threshold
+predicted_binary_labels <- ifelse(prob_investment_grade >= 0.5, "Investment", "Speculative")
+predicted_binary_labels <- factor(predicted_binary_labels, levels = c("Investment", "Speculative"))
+
+# 4. Determine true binary labels from test_rating
+true_binary_labels <- ifelse(test_rating$Rating %in% investment_grade_ratings, "Investment", "Speculative")
+true_binary_labels <- factor(true_binary_labels, levels = c("Investment", "Speculative"))
+
+# 5. Compute and print confusion matrix and metrics
+# Check if there is variability in both true and predicted labels
+if (length(unique(predicted_binary_labels)) < 2 || length(unique(true_binary_labels)) < 2) {
+    message("Warning: One or both factors (predicted or true labels) have fewer than 2 levels (e.g., all predictions are 'Investment').")
+    message("Standard confusion matrix metrics from caret might not be meaningful or directly computable in this scenario.")
+    message("Predicted distribution:")
+    print(table(predicted_binary_labels))
+    message("True distribution:")
+    print(table(true_binary_labels))
+    # Add custom calculations if needed for this edge case, e.g. accuracy if all match.
+    if(length(unique(predicted_binary_labels)) == 1 && length(unique(true_binary_labels)) == 1 && unique(predicted_binary_labels) == unique(true_binary_labels)){
+      cat("Accuracy: 100% (all predictions match the single true class)\n")
+    } else {
+      cat("Accuracy, Precision, Recall, F1 cannot be reliably calculated by caret.\n")
+    }
+} else {
+    conf_matrix_obj <- confusionMatrix(data = predicted_binary_labels, 
+                                     reference = true_binary_labels, 
+                                     positive = "Investment")
+
+    print(conf_matrix_obj$table) # Print the confusion matrix table
+
+    accuracy <- conf_matrix_obj$overall["Accuracy"]
+    precision <- conf_matrix_obj$byClass["Precision"]
+    recall <- conf_matrix_obj$byClass["Recall"]
+    f1_score <- conf_matrix_obj$byClass["F1"]
+
+    cat("\nBinary Classification Metrics (Positive Class: 'Investment'):\n")
+    cat("Accuracy: ", ifelse(is.na(accuracy), "NA", round(accuracy, 4)), "\n")
+    cat("Precision: ", ifelse(is.na(precision), "NA", round(precision, 4)), "\n")
+    cat("Recall (Sensitivity): ", ifelse(is.na(recall), "NA", round(recall, 4)), "\n")
+    cat("F1-Score: ", ifelse(is.na(f1_score), "NA", round(f1_score, 4)), "\n")
+}
+```
+
+**Interpretation of Metrics:**
+
+*   **Accuracy**: Overall, how often is the classifier correct in distinguishing between Investment and Speculative grade? ( (TP+TN)/total )
+*   **Precision**: When the model predicts a rating is "Investment" grade, how often is it actually Investment grade? ( TP/(TP+FP) ) - This measures the reliability of positive predictions.
+*   **Recall (Sensitivity)**: Of all the companies that are actually "Investment" grade, how many did the model correctly identify? ( TP/(TP+FN) ) - This measures how well the model finds all the positive cases.
+*   **F1-Score**: The harmonic mean of Precision and Recall. It provides a single score that balances both concerns, which is especially useful if there's an imbalance between the number of Investment and Speculative grade companies.
+
+These metrics will give a quantitative assessment of how well the ordinal model performs on this derived binary task.
+
 ## 5. Model Comparison (1.5pt)
 
 a. Use k-fold cross-validation to compare the models.
