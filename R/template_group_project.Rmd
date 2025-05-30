@@ -499,9 +499,118 @@ b. Explain each model and describe its structure (what they assume about potenti
 
 a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
 
-```
+```{r model_checking, echo=TRUE, message=FALSE}
+## 4. Model checking (3pt)
 
+### a. Prior sensitivity analysis
 
+```{r prior_sensitivity, echo=TRUE, message=FALSE, warning=FALSE}
+library(brms)
+library(bayesplot)
+library(ggplot2)
+
+# 1. Load best hyperparameters from the most recent CSV
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  stop(sprintf("Directory '%s' does not exist – check `wd`.", hyper.out.dir))
+}
+csv_files <- list.files(hyper.out.dir, pattern = "^best_params_.*\\.csv$", full.names = TRUE)
+if (length(csv_files) == 0) {
+  stop("No 'best_params_*.csv' file found in ", hyper.out.dir)
+}
+csv_file <- csv_files[order(file.info(csv_files)$mtime, decreasing = TRUE)][1]
+message(sprintf("Reading hyperparameters from: %s", basename(csv_file)))
+best_params_df <- read.csv(csv_file, stringsAsFactors = FALSE)
+
+# 2. Extract hyperparameters (with defaults as fallback)
+get_or <- function(df, name, default) {
+  if (name %in% names(df)) df[[name]][1] else default
+}
+sigma_fixed <- get_or(best_params_df, "sigma_fixed", 2.5)
+sigma_group <- get_or(best_params_df, "sigma_group", 1.5)
+adapt_delta <- get_or(best_params_df, "adapt_delta", 0.95)
+iter        <- get_or(best_params_df, "iter", 1500)
+warmup      <- floor(iter / 2)
+
+# 3. Define original and alternative priors
+orig_priors <- c(
+  prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+alt_priors_tight <- c(
+  prior_string("normal(0, 1)", class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+alt_priors_wide <- c(
+  prior_string("normal(0, 5)", class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+
+# 4. Fit prior predictive (sample_prior = "only") under each prior set
+pp_orig <- brm(
+  formula      = Binary.Rating ~ Current.Ratio +
+                                 `Long.term.Debt...Capital` +
+                                 Debt.Equity.Ratio +
+                                 EBITDA.Margin +
+                                 `Operating.Cash.Flow.Per.Share` +
+                                 (1 | Sector),
+  data         = train_binary,
+  family       = bernoulli(link = "logit"),
+  prior        = orig_priors,
+  sample_prior = "only",
+  iter         = iter,
+  warmup       = warmup,
+  control      = list(adapt_delta = adapt_delta),
+  chains       = 4,
+  cores        = 4,
+  refresh      = 0
+)
+pp_tight <- update(pp_orig, prior = alt_priors_tight, sample_prior = "only", refresh = 0)
+pp_wide  <- update(pp_orig, prior = alt_priors_wide,  sample_prior = "only", refresh = 0)
+
+# 5. Extract linear predictor draws, assign names, and plot
+lin_orig_mat  <- as.matrix(posterior_linpred(pp_orig,  transform = FALSE))
+colnames(lin_orig_mat)  <- paste0("obs", seq_len(ncol(lin_orig_mat)))
+lin_tight_mat <- as.matrix(posterior_linpred(pp_tight, transform = FALSE))
+colnames(lin_tight_mat) <- paste0("obs", seq_len(ncol(lin_tight_mat)))
+lin_wide_mat  <- as.matrix(posterior_linpred(pp_wide,  transform = FALSE))
+colnames(lin_wide_mat)  <- paste0("obs", seq_len(ncol(lin_wide_mat)))
+
+mcmc_areas(
+  lin_orig_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Original Priors")
+
+mcmc_areas(
+  lin_tight_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Tighter Priors (Normal(0,1))")
+
+mcmc_areas(
+  lin_wide_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Wider Priors (Normal(0,5))")
+
+# 6. Re-fit the original model for posterior predictive check
+fit_full <- brm(
+  formula = Binary.Rating ~ Current.Ratio +
+                           `Long.term.Debt...Capital` +
+                           Debt.Equity.Ratio +
+                           EBITDA.Margin +
+                           `Operating.Cash.Flow.Per.Share` +
+                           (1 | Sector),
+  data    = train_binary,
+  family  = bernoulli(link = "logit"),
+  prior   = orig_priors,
+  iter    = iter,
+  warmup  = warmup,
+  control = list(adapt_delta = adapt_delta, max_treedepth = 12),
+  chains  = 4,
+  cores   = 4,
+  refresh = 0
+)
+
+pp_check(fit_full, ndraws = 100) + labs(title = "Posterior Predictive Check – Original Model")
 
 ```
 <!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
@@ -524,12 +633,15 @@ a. Use k-fold cross-validation to compare the models.
 ```
 b. Determine the best model based on predictive accuracy and justify your decision.
 
+
 <!-- DECISION -->
 
 
 ## 6. Interpretation of Important Parameters (1.5pt)
 
 Choose one of the best models and interpret its most important parameters.
+
+
 
 <!-- INTERPRETATION AND CODE GOES HERE -->
  
