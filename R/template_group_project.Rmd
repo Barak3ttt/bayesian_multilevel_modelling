@@ -2,7 +2,7 @@
 title: "Group project"
 subtitle: "Group Number?"
 author: 
-  - "FirstName LastName"
+  - "Jacob Klaren"
   - "FirstName LastName"
   - "FirstName LastName"
   - "FirstName LastName"
@@ -243,89 +243,132 @@ a. Fit multiple appropriate models to the dataset (as many models as there are m
 
 # 0. Install and load packages
 if (!requireNamespace("ParBayesianOptimization", quietly = TRUE)) {
-  install.packages("ParBayesianOptimization")
+  install.packages("ParBayesianOptimization", repos = 'https://cran.rstudio.com/')
 }
 if (!requireNamespace("brms", quietly = TRUE)) {
-  install.packages("brms")
+  install.packages("brms", repos = 'https://cran.rstudio.com/')
 }
 if (!requireNamespace("loo", quietly = TRUE)) {
-  install.packages("loo")
+  install.packages("loo", repos = 'https://cran.rstudio.com/')
 }
 library(ParBayesianOptimization)
 library(brms)
 library(loo)
 
 # 1. Prepare training data
-# Ensure 'train_binary' exists
+# Ensure 'train_binary' exists (this part is for the original bernoulli model, can be left)
 if (!exists("train_binary")) {
   train_binary <- read.csv("Input_Data/df_binary.csv")
   train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
 }
 
+# --- BEGIN MODIFIED BRM MODEL CALL ---
+# Define priors for the cumulative model with cloglog link and random intercepts
+cloglog_intercept_priors <- c(
+  prior(normal(0, 1.5), class = b),  # For all fixed effects, including interaction
+  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
+  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+)
+
+# Ensure train_rating is available and Rating is an ordered factor
+# It should be from the splitdata chunk, but we make sure Rating is ordered here.
+if (!exists("train_rating")) {
+    stop("train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.")
+}
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+train_rating$Rating <- factor(train_rating$Rating, levels = rating_levels, ordered = TRUE)
+
+
+# Fit a standalone brms model (cumulative with cloglog link and random intercepts only)
+print("Fitting a cumulative brm model with cloglog link and random intercepts...")
+fit_cumulative_cloglog_intercepts <- brm(
+  formula = bf(
+    Rating ~ Current.Ratio * Debt.Equity.Ratio + # Includes Current.Ratio, Debt.Equity.Ratio, and their interaction
+             `Long.term.Debt...Capital` +
+             EBITDA.Margin +
+             `Operating.Cash.Flow.Per.Share` +
+             (1 | Sector) # Random intercepts for Sector
+  ),
+  data    = train_rating,
+  family  = cumulative(link = "cloglog"), # Cumulative likelihood with cloglog link
+  prior   = cloglog_intercept_priors,
+  iter    = 2000,
+  warmup  = 1000,
+  control = list(adapt_delta = 0.95),
+  cores   = 4,
+  refresh = 0,
+  seed    = 123
+)
+print("Cumulative cloglog brm model fitting complete.")
+print(summary(fit_cumulative_cloglog_intercepts))
+# --- END MODIFIED BRM MODEL CALL ---
+
 # 2. Define the objective function with error handling
 # Returns a list with 'Score' to maximize (we use -LOOIC)
-obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
-  result <- tryCatch({
-    # Build dynamic priors as strings
-    priors <- c(
-      prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
-      prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
-    )
-
-    # Fit the brms model
-    fit <- brm(
-      formula = bf(
-        Binary.Rating ~ Current.Ratio +
-                        `Long.term.Debt...Capital` +
-                        Debt.Equity.Ratio +
-                        EBITDA.Margin +
-                        `Operating.Cash.Flow.Per.Share` +
-                        (1 | Sector)
-      ),
-      data    = train_binary,
-      family  = bernoulli(link = "logit"),
-      prior   = priors,
-      iter    = 1000,
-      warmup  = 500,
-      control = list(adapt_delta = adapt_delta),
-      cores   = 4,
-      refresh = 0
-    )
-
-    # Compute LOOIC
-    looic_val <- loo(fit)$estimates["looic", "Estimate"]
-    list(Score = -looic_val)
-  }, error = function(e) {
-    message("Objective error: ", e$message)
-    return(NULL)
-  })
-  return(result)
-}
+# obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
+#   result <- tryCatch({
+#     # Build dynamic priors as strings
+#     priors <- c(
+#       prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
+#       prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
+#     )
+# 
+#     # Fit the brms model
+#     fit <- brm(
+#       formula = bf(
+#         Binary.Rating ~ Current.Ratio +
+#                         `Long.term.Debt...Capital` +
+#                         Debt.Equity.Ratio +
+#                         EBITDA.Margin +
+#                         `Operating.Cash.Flow.Per.Share` +
+#                         (1 | Sector)
+#       ),
+#       data    = train_binary,
+#       family  = bernoulli(link = "logit"),
+#       prior   = priors,
+#       iter    = 1000,
+#       warmup  = 500,
+#       control = list(adapt_delta = adapt_delta),
+#       cores   = 4,
+#       refresh = 0
+#     )
+# 
+#     # Compute LOOIC
+#     looic_val <- loo(fit)$estimates["looic", "Estimate"]
+#     list(Score = -looic_val)
+#   }, error = function(e) {
+#     message("Objective error: ", e$message)
+#     return(NULL)
+#   })
+#   return(result)
+# }
 
 # 3. Define search bounds
-bounds <- list(
-  sigma_fixed = c(0.1, 10),
-  sigma_group = c(0.1, 5),
-  adapt_delta = c(0.8, 0.99)
-)
+# bounds <- list(
+#   sigma_fixed = c(0.1, 10),
+#   sigma_group = c(0.1, 5),
+#   adapt_delta = c(0.8, 0.99)
+# )
 
 # 4. Run Bayesian Optimization with progress reporting
-set.seed(123)
-opt_res <- bayesOpt(
-  FUN           = obj_fun,
-  bounds        = bounds,
-  initPoints    = 5,
-  iters.n       = 15,
-  acq           = "ucb",       # Upper confidence bound
-  kappa         = 2.576,         # exploration/exploitation trade-off
-  verbose       = 2,             # textual progress
-  plotProgress  = TRUE,          # acquisition plot
-  dropNull      = TRUE           # skip failed evaluations
-)
+# set.seed(123)
+# opt_res <- bayesOpt(
+#   FUN           = obj_fun,
+#   bounds        = bounds,
+#   initPoints    = 5,
+#   iters.n       = 15,
+#   acq           = "ucb",       # Upper confidence bound
+#   kappa         = 2.576,         # exploration/exploitation trade-off
+#   verbose       = 2,             # textual progress
+#   plotProgress  = TRUE,          # acquisition plot
+#   dropNull      = TRUE           # skip failed evaluations
+# )
 
 # 5. Examine best hyperparameters
-best_params <- getBestPars(opt_res)
-print(best_params)
+# best_params <- getBestPars(opt_res)
+# print(best_params)
 ```
 
 
@@ -339,6 +382,34 @@ print(best_params)
 b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
 
 <!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+**Model 1: Cumulative Ordinal Regression with Random Intercepts and Cloglog Link**
+
+This model, named `fit_cumulative_cloglog_intercepts` in the R code, aims to predict the ordinal credit `Rating` based on several financial predictors.
+
+*   **Dependent Variable**: `Rating`, treated as an ordered categorical variable.
+*   **Likelihood and Link Function**: The model uses a `cumulative` likelihood with a `cloglog` (complementary log-log) link function.
+    *   The cumulative likelihood is appropriate for ordinal responses, modeling the probability of a rating being in a certain category or lower.
+    *   The `cloglog` link is an alternative to the more common `logit` link. It's asymmetric and can be particularly useful when the probability of one extreme (either the lowest or highest category) is more prevalent or of particular interest, or when the rate of change towards one end of the probability scale is different from the other. For example, if lower ratings are rare and the probability of transitioning out of them changes slowly at first, then more rapidly, a cloglog link might be suitable.
+*   **Fixed Effects Structure**: The model includes the following predictors as fixed effects:
+    *   `Current.Ratio`
+    *   `Debt.Equity.Ratio`
+    *   An interaction term: `Current.Ratio * Debt.Equity.Ratio` (which means the model estimates main effects for both, plus their combined effect).
+    *   `Long.term.Debt...Capital`
+    *   `EBITDA.Margin`
+    *   `Operating.Cash.Flow.Per.Share`
+    These predictors are assumed to have a consistent effect on the log-cumulative odds (or cloglog-transformed cumulative probabilities) of the `Rating` across all sectors.
+*   **Random Effects Structure**: `(1 | Sector)`
+    *   This specifies random intercepts for each `Sector`. It assumes that the baseline propensity for a given credit rating (i.e., the cutpoints on the latent scale) varies from sector to sector.
+    *   It does *not* assume that the effects of the predictors (slopes) vary by sector.
+*   **Priors**:
+    *   Fixed Effects (`class = b`): `normal(0, 1.5)` - This is a weakly informative prior, suggesting that the predictor coefficients are centered around 0 with a standard deviation of 1.5 on the cloglog scale. For standardized predictors, this allows for reasonably sized effects.
+    *   Standard Deviation of Random Intercepts (`class = sd` for `Sector`): `student_t(3, 0, 2.5)` - A weakly informative prior for the variability of the intercepts across sectors. The Student's t-distribution with 3 degrees of freedom has heavier tails than a normal distribution, making it robust to outliers.
+    *   Cutpoints/Thresholds (`class = Intercept`): `student_t(3, 0, 2.5)` - Weakly informative priors for the estimated thresholds that define the boundaries between the ordered categories of `Rating` on the latent cloglog scale.
+*   **Assumptions**:
+    *   Proportional odds (or proportional hazards, in the context of cloglog): The effect of each predictor is assumed to be consistent across all cutpoints/thresholds of the ordinal outcome. This is a key assumption of standard cumulative models.
+    *   The random intercepts for `Sector` are normally distributed.
+    *   Observations are conditionally independent given the model parameters.
+*   **Estimation**: The model was fitted using Bayesian methods with `brms`, employing 2000 total iterations per chain, with 1000 iterations as warmup.
 
 ## 4. Model checking (3pt)
 
