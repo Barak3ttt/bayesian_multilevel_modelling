@@ -237,95 +237,250 @@ test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Ra
 
 a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
 
-```{r hyperparamater, echo=TRUE, message=FALSE}
-# parbayes_opt.R
-# R script for Bayesian hyperparameter optimization using ParBayesianOptimization
+```{r hyperoptimization, echo=TRUE, message=FALSE}
+# bayes_opt_25_rBayes.R
+# Bayesian hyper‑parameter optimisation (25 evaluations) using **rBayesianOptimization**
+# instead of ParBayesianOptimization to avoid the inBounds NA bug.
 
-# 0. Install and load packages
-if (!requireNamespace("ParBayesianOptimization", quietly = TRUE)) {
-  install.packages("ParBayesianOptimization")
-}
-if (!requireNamespace("brms", quietly = TRUE)) {
-  install.packages("brms")
-}
-if (!requireNamespace("loo", quietly = TRUE)) {
-  install.packages("loo")
-}
-library(ParBayesianOptimization)
+# 0. Install / load packages ---------------------------------------------------
+required_pkgs <- c("brms", "loo", "rBayesianOptimization", "progress")
+for (pkg in required_pkgs) if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+
 library(brms)
 library(loo)
+library(rBayesianOptimization)   # <‑‑ different optimiser
+library(progress)
 
-# 1. Prepare training data
-# Ensure 'train_binary' exists
-if (!exists("train_binary")) {
-  train_binary <- read.csv("Input_Data/df_binary.csv")
-  train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+# 1. Search space --------------------------------------------------------------
+search_bounds <- list(
+  sigma_fixed = c(0.5, 10),
+  sigma_group = c(0.5, 5),
+  adapt_delta = c(0.90, 0.99),
+  iter        = c(1000, 2000)
+)
+
+# helper to snap iter to 1000 / 1500 / 2000
+snap_iter <- function(x) {
+  cuts <- c(1000, 1500, 2000)
+  cuts[which.min(abs(cuts - x))]
 }
 
-# 2. Define the objective function with error handling
-# Returns a list with 'Score' to maximize (we use -LOOIC)
-obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
-  result <- tryCatch({
-    # Build dynamic priors as strings
-    priors <- c(
-      prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
-      prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
-    )
+# 2. Objective function --------------------------------------------------------
+obj_fun <- function(sigma_fixed, sigma_group, adapt_delta, iter) {
+  iter   <- snap_iter(iter)
+  warmup <- iter / 2
 
-    # Fit the brms model
+  priors <- c(
+    prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+    prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+  )
+
+  score <- tryCatch({
     fit <- brm(
-      formula = bf(
-        Binary.Rating ~ Current.Ratio +
-                        `Long.term.Debt...Capital` +
-                        Debt.Equity.Ratio +
-                        EBITDA.Margin +
-                        `Operating.Cash.Flow.Per.Share` +
-                        (1 | Sector)
-      ),
+      Binary.Rating ~ Current.Ratio +
+                     `Long.term.Debt...Capital` +
+                     Debt.Equity.Ratio +
+                     EBITDA.Margin +
+                     `Operating.Cash.Flow.Per.Share` +
+                     (1 | Sector),
       data    = train_binary,
       family  = bernoulli(link = "logit"),
       prior   = priors,
-      iter    = 1000,
-      warmup  = 500,
-      control = list(adapt_delta = adapt_delta),
+      iter    = iter,
+      warmup  = warmup,
+      control = list(adapt_delta = adapt_delta, max_treedepth = 12),
       cores   = 4,
       refresh = 0
     )
-
-    # Compute LOOIC
-    looic_val <- loo(fit)$estimates["looic", "Estimate"]
-    list(Score = -looic_val)
+    -loo(fit, cores = 2)$estimates["looic", "Estimate"]  # maximise
   }, error = function(e) {
-    message("Objective error: ", e$message)
-    return(NULL)
+    message("Penalty – ", e$message)
+    -1e6
   })
-  return(result)
+
+  list(Score = score)
 }
 
-# 3. Define search bounds
-bounds <- list(
-  sigma_fixed = c(0.1, 10),
-  sigma_group = c(0.1, 5),
-  adapt_delta = c(0.8, 0.99)
-)
-
-# 4. Run Bayesian Optimization with progress reporting
+# 3. Run Bayesian optimisation -------------------------------------------------
 set.seed(123)
-opt_res <- bayesOpt(
-  FUN           = obj_fun,
-  bounds        = bounds,
-  initPoints    = 5,
-  iters.n       = 15,
-  acq           = "ucb",       # Upper confidence bound
-  kappa         = 2.576,         # exploration/exploitation trade-off
-  verbose       = 2,             # textual progress
-  plotProgress  = TRUE,          # acquisition plot
-  dropNull      = TRUE           # skip failed evaluations
+opt <- BayesianOptimization(
+  FUN = obj_fun,
+  bounds = search_bounds,
+  init_points = 10,
+  n_iter      = 15,
+  acq = "ucb", kappa = 2.576,
+  verbose = TRUE
 )
 
-# 5. Examine best hyperparameters
-best_params <- getBestPars(opt_res)
-print(best_params)
+print(opt$Best_Par)
+```
+```{r hyperparamater_saving, echo=TRUE, message=FALSE}
+
+# 1) Build (and create) your output directory
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  dir.create(hyper.out.dir, recursive = TRUE)
+}
+
+# 2) Construct file paths
+stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+csv_file <- file.path(
+  hyper.out.dir,
+  paste0("best_params_", stamp, ".csv")
+)
+rds_file <- file.path(
+  hyper.out.dir,
+  paste0("rBayesOpt_res_", stamp, ".rds")
+)
+
+# 3) Write the best‐params CSV
+write.csv(
+  opt$Best_Par,   # the best‐parameter data.frame
+  file = csv_file,
+  row.names = FALSE
+)
+
+# 4) Save the full optimization result as an RDS
+saveRDS(
+  opt,           # the full ParBayesianOptimization result object
+  file = rds_file
+)
+
+```
+
+```{r final_model_fit, echo=TRUE, message=FALSE}
+# final_model_fit.R
+# Fit a Bayesian multilevel logistic regression using the best hyperparameters
+# (reads them directly from the uploaded CSV)
+
+# 1. Load libraries (will error if not installed) ----------------------------
+library(brms)
+library(pROC)
+
+# ---------------------------------------------------------------------------
+# 2. Locate the best-params CSV ---------------------------------------------
+# ---------------------------------------------------------------------------
+# Assuming your working directory is stored in the variable `wd`.
+# The CSV is expected in: <wd>/Hyperparameter_Optimization/
+
+if (!exists("wd")) {
+  wd <- getwd()  # fallback – uses current working directory
+  message(sprintf("`wd` not found; defaulting to getwd(): %s", wd))
+}
+
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  stop(sprintf("Directory '%s' does not exist – check `wd`.", hyper.out.dir))
+}
+
+csv_files <- list.files(hyper.out.dir, pattern = "^best_params_.*\\.csv$", full.names = TRUE)
+if (length(csv_files) == 0) {
+  stop("No 'best_params_*.csv' file found in ", hyper.out.dir)
+}
+
+# Pick the newest file (in case multiple exist)
+csv_file <- csv_files[order(file.info(csv_files)$mtime, decreasing = TRUE)][1]
+message(sprintf("Reading hyperparameters from: %s", basename(csv_file)))
+
+best_params_df <- read.csv(csv_file, stringsAsFactors = FALSE)
+
+# ---------------------------------------------------------------------------
+# 3. Extract hyperparameters with sane fallbacks ----------------------------
+# ---------------------------------------------------------------------------
+get_or <- function(df, name, default) {
+  if (name %in% names(df)) df[[name]][1] else default
+}
+
+sigma_fixed <- get_or(best_params_df, "sigma_fixed", 2.5)
+sigma_group <- get_or(best_params_df, "sigma_group", 1.5)
+adapt_delta <- get_or(best_params_df, "adapt_delta", 0.95)
+iter        <- get_or(best_params_df, "iter", 1500)
+warmup      <- floor(iter / 2)
+
+# ---------------------------------------------------------------------------
+# 4. Define priors -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+priors <- c(
+  prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+
+# ---------------------------------------------------------------------------
+# 5. Fit model on `train_binary` ---------------------------------------------
+# ---------------------------------------------------------------------------
+fit <- brm(
+  formula = bf(
+    Binary.Rating ~ Current.Ratio +
+                   `Long.term.Debt...Capital` +
+                   Debt.Equity.Ratio +
+                   EBITDA.Margin +
+                   `Operating.Cash.Flow.Per.Share` +
+                   (1 | Sector)
+  ),
+  data    = train_binary,
+  family  = bernoulli(link = "logit"),
+  prior   = priors,
+  iter    = iter,
+  warmup  = warmup,
+  control = list(adapt_delta = adapt_delta, max_treedepth = 12),
+  cores   = 4,
+  refresh = 100
+)
+
+# ---------------------------------------------------------------------------
+# 6. Evaluate on `test_binary` ----------------------------------------------
+# ---------------------------------------------------------------------------
+probs <- colMeans(posterior_linpred(fit, newdata = test_binary, transform = TRUE))
+
+pred_class <- factor(ifelse(probs > 0.5, 1, 0), levels = c(0, 1))
+true_class <- test_binary$Binary.Rating
+
+conf_mat <- table(Predicted = pred_class, Actual = true_class)
+accuracy  <- sum(diag(conf_mat)) / sum(conf_mat)
+precision <- conf_mat["1", "1"] / sum(conf_mat["1", ])
+recall    <- conf_mat["1", "1"] / sum(conf_mat[, "1"])
+f1_score  <- 2 * precision * recall / (precision + recall)
+
+roc_obj   <- roc(as.numeric(as.character(true_class)), probs)
+auc_value <- auc(roc_obj)
+
+# ---------------------------------------------------------------------------
+# 7. Report ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+print(conf_mat)
+
+
+# Build a small data‑frame and round only the numeric column -----------------
+metrics <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1 Score", "ROC AUC"),
+  Value  = c(accuracy, precision, recall, f1_score, auc_value)
+)
+metrics$Value <- round(metrics$Value, 3)
+print(metrics, row.names = FALSE)
+
+# In case you still want individual lines in the console (use cat so they
+# always show up in stdout)
+cat(sprintf("\nAccuracy : %.3f\n", accuracy))
+cat(sprintf("Precision: %.3f\n", precision))
+cat(sprintf("Recall   : %.3f\n", recall))
+cat(sprintf("F1 Score : %.3f\n", f1_score))
+cat(sprintf("ROC AUC  : %.3f\n\n", auc_value))
+
+```
+
+```{r diagnostic, echo=TRUE, message=FALSE}
+# basic model diagnostics
+print(fit)            # quick coefficients & R-hat
+summary(fit)          # full convergence stats
+bayesplot::mcmc_trace(as.array(fit))   # trace plots if you have bayesplot installed
+
+# posterior predictive check
+pp_check(fit)
+
+# loo object for more detail (elpd, Pareto-k, etc.)
+l <- loo(fit, cores = 2)
+print(l)
 ```
 
 
