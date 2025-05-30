@@ -133,7 +133,7 @@ df_raw <- janitor::clean_names(df_raw)
 # Define ordered rating levels
 rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
                    "BBB+","BBB","BBB-","BB+","BB","BB-",
-                   "B+","B","B-","CCC","CC","C","D")
+                   "B+","B","B-","CCC+", "CCC", "CCC-","CC+", "CC","C","D")
 
 # Create df with fiscal_year and scaled predictors
 df <- df_raw %>%
@@ -161,7 +161,7 @@ df_filtered <- df %>%
   filter(fiscal_year == "2016") %>%
   select(
     binary_rating,
-    rating,
+    rating_ord, 
     current_ratio,
     long_term_debt_capital,
     debt_equity_ratio,
@@ -188,7 +188,8 @@ df_binary <- df_filtered %>%
 
 df_rating <- df_filtered %>%
   select(
-    Rating                          = rating,
+    Rating                          = rating_ord,
+    Binary.Rating = binary_rating,
     Current.Ratio                   = current_ratio,
     Long.term.Debt...Capital        = long_term_debt_capital,
     Debt.Equity.Ratio               = debt_equity_ratio,
@@ -205,38 +206,6 @@ b. Report the number of observations, columns (with their meaning) and their dat
 
 ## 2. Split the data and tranform columns as necessary. (0.5pt)
  Split the data into training (80%) and test set (80%). Transform the columns if necessary.
-
-```{r splitdata, echo=TRUE, message=FALSE}
-# Load required package for splitting
-# (dplyr already loaded)
-
-set.seed(123) # for reproducibility
-
-# Split df_binary into 80% train and 20% test
-n_binary <- nrow(df_binary)
-train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
-train_binary <- df_binary[train_idx_binary, ]
-test_binary <- df_binary[-train_idx_binary, ]
-
-# Ensure factor levels of Binary.Rating are consistent
-train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
-test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
-
-# Split df_rating into 80% train and 20% test
-n_rating <- nrow(df_rating)
-train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
-train_rating <- df_rating[train_idx_rating, ]
-test_rating <- df_rating[-train_idx_rating, ]
-
-# Ensure factor levels of Rating are consistent
-train_rating$Rating <- factor(train_rating$Rating)
-test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
-```
-
-## 3. Model Exploration (3pt)
-
-a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
-
 ```{r hyperparamater, echo=TRUE, message=FALSE}
 # parbayes_opt.R
 # R script for Bayesian hyperparameter optimization using ParBayesianOptimization
@@ -333,6 +302,70 @@ print(best_params)
 
 {r, message = FALSE, results = "hide"}
 # models go here
+```{r predicting ordinal rating and deriving binary rating from them, echo=TRUE, message=FALSE}
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+```
+
+## 3. Model Exploration (3pt)
+
+a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
+
+```{r}
+#standardizing predictors so that priors later are easier to set 
+predictorers <- c("Current.Ratio",
+                  "Long.term.Debt...Capital",
+                  "Debt.Equity.Ratio",
+                  "EBITDA.Margin",
+                  "Operating.Cash.Flow.Per.Share")
+#Lilyana codee
+library(brms)
+
+model_l1 <- brm(
+  formula = Rating ~ Debt.Equity.Ratio + Current.Ratio + 
+    EBITDA.Margin + Operating.Cash.Flow.Per.Share + Long.term.Debt...Capital +
+    ( 1 | Sector),
+  data = train_rating,
+  family = cumulative("logit"),
+  seed = 123
+)
+summary(model_l1)
+##All Rhat values = 1.00 => convergence
+## Bulk and tail ESS >1000 & no warnings 
+#pp checks lookedd good too 
+#pp_check(model_l1)
+#pp_check(model_l1, type="stat_2d")
+#plot(model_l1) #nice fuzzy plots
+```
+
+
+<!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
+
+{r, message = FALSE, results = "hide"}
+# models go here
 
 
 
@@ -344,18 +377,85 @@ b. Explain each model and describe its structure (what they assume about potenti
 
 a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
 
-```
-
-
-
-```
-<!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
-
-b. Conduct posterior predictive checks for each model to assess how well they fit the data.
-Explain what you conclude.
-
 ```{r}
+#Prior sensitivity analysis and adjustment of priors 
+#install.packages("priorsense")
+library(priorsense)
 
+sensitivity_l1 <- powerscale_sensitivity(model_l1)
+print(sensitivity_l1)
+#warnings for prior of intercept: potential prior-data conflict
+#setting priors now
+#Gelman et al 2020
+#calculating sds for predictors:
+sd_DER <- sd(train_rating$'Debt.Equity.Ratio', na.rm = TRUE)
+sd_CR <- sd(train_rating$'Current.Ratio', na.rm = TRUE)
+sd_EBITDA<- sd(train_rating$'EBITDA.Margin', na.rm = TRUE)
+sd_OCF <- sd(train_rating$'Operating.Cash.Flow.Per.Share', na.rm = TRUE)
+sd_LTDC <- sd(train_rating$'Long.term.Debt...Capital', na.rm = TRUE)
+
+rating_numeric <-as.numeric(train_rating$Rating)
+
+sd_R <-sd(rating_numeric, na.rm=TRUE)
+
+prior_sd_DER <- 2.5*sd_R/sd_DER
+#0.1631
+prior_sd_CR <-2.5*sd_R/sd_CR
+#6.0350
+prior_sd_EBITDA <- 2.5*sd_R/sd_EBITDA
+#0.2127
+prior_sd_OCF <- 2.5*sd_R/sd_OCF
+#1,4442
+prior_sd_LTDC <- 2.5*sd_R/sd_LTDC
+#32.2953
+
+prios<-c(prior_sd_DER,prior_sd_CR, prior_sd_EBITDA, prior_sd_OCF, prior_sd_LTDC)
+print(prios)
+
+
+adj_priors<- c(
+  prior(normal(0, 0.1631), class = "b", coef = "Debt.Equity.Ratio"),
+  prior(normal(0, 6.0350), class = "b", coef = "Current.Ratio"),
+  prior(normal(0, 0.2127), class = "b", coef = "EBITDA.Margin"),
+  prior(normal(0, 1.4442), class = "b", coef = "Operating.Cash.Flow.Per.Share"),
+  prior(normal(0, 32.2953), class = "b", coef = "Long.term.Debt...Capital"),
+  prior(normal(0,10), class = "Intercept"),
+  prior(exponential(1), class = "sd")
+)
+
+#new model
+model_l2 <- brm(
+  formula = Rating ~ Debt.Equity.Ratio + Current.Ratio + 
+    EBITDA.Margin + Operating.Cash.Flow.Per.Share + Long.term.Debt...Capital +
+    ( 1 | Sector),
+  data = train_rating,
+  family = cumulative("logit"),
+  prior = adj_priors,
+  seed = 123
+)
+summary(model_l2)
+#Again Rhat and ESS are good, no warnings
+#plot(model_l2) #nice and fuzzy
+#pp_check(model_l2)
+#pp_check(model_l2, type="stat_2d")
+#pp_check(model_l2, type = "bars", ndraws = 100)
+sensitivity_l2 <- powerscale_sensitivity(model_l2)
+print(sensitivity_l2) #no problems priors are good
+
+####This part idk where to put
+#get posterior draws
+pred_draws <- posterior_predict(model_l2)
+#convert to binary where bbb-(ordinal index <= 11) and below are 0 (do not invest), above are 1 = invest
+binary_draws <- pred_draws <= 11
+#getting posterior mean probability of getting a binary rating = 1 (invest)
+binary_probability <- colMeans(binary_draws)
+#classifying using a 0.7 treshhold probability
+binary_predict <- ifelse(binary_probability >= 0.7, 1, 0) #we want less false positives (so we don't get invest when we are not quite certain we want to invest)
+actual_binary_rating <- train_rating$Binary.Rating
+
+#confusion matrix: 
+table(Predicted = binary_predict, Actual = actual_binary_rating)
+print(table(Predicted = binary_predict, Actual = actual_binary_rating))
 ```
 
 <!-- EXPLAIN CONCLUSIONS -->
