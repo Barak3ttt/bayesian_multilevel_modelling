@@ -1,0 +1,442 @@
+--
+title: "Group project"
+subtitle: "Group Number?"
+author: 
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_download: false
+---
+
+```{r setup, include = FALSE}
+options(max.print= 120,
+        width = 90,
+        tibble.width = 80)
+knitr::opts_chunk$set(echo= TRUE,
+                      cache=FALSE,
+                      prompt=FALSE,
+                      tidy="styler",
+                      comment=NA,
+                      message=FALSE,
+                      warning=TRUE)
+
+knitr::opts_knit$set(width=90)
+knitr::opts_chunk$set(cache.extra = knitr::rand_seed)
+set.seed(42)
+```
+
+# Checklist {-}
+
+The submission includes the following.
+
+- [ ] RMD document where it's clear what is the code that corresponds to each question. 
+- [ ] Dataset
+- [ ] html/PDF document with the following
+    - [ ] Numbered questions and answers with text and all the necessary code.
+    - [ ] Subtitle indicates the group number 
+    - [ ] Name of all group members
+    - [ ] Details of specification of the work done by group members (e.g., who found the data, who did the pre-processing, who answered which questions, etc).
+    - [ ] Statement of technology. Did you use any AI tools? How?
+
+
+# Group project {-}
+
+For the project, we use the following packages:
+
+```{r, message = FALSE}
+## ...
+```
+
+## 1. Dataset Selection (0.5pt)
+Select a dataset with clusters such as schools, regions, or people with multiple observations per individual. (From for example, https://www.kaggle.com/) It would be a good idea to choose a smallish dataset (not too many rows, e.g., less than 1000) or subset it so that fitting the models doesn't take too long. 
+
+a. Describe the dataset with a couple of short sentences. What was its intended use? Are there papers that reference it? Provide information on how to obtain the dataset, including its source and any necessary preprocessing steps/feature engineering.
+
+
+<!-- DESCRIBE IT BELOW -->
+
+```{r get-data-direct, echo=TRUE, message=FALSE}
+# 0) Install & load httr for HTTP requests
+if (!requireNamespace("httr", quietly = TRUE)) {
+  install.packages("httr", repos = "https://cran.rstudio.com/")
+}
+library(httr)
+install.packages("janitor")
+install.packages("tidyverse")
+# 1) Kaggle credentials
+user <- "barakazor"
+key  <- "6bfceda688e1452d09191636ad94eeeb"
+
+# 2) Define working and data directories
+wd        <- getwd()
+data_dir  <- file.path(wd, "data")
+input_dir <- file.path(wd, "Input_Data")
+if (!dir.exists(data_dir))  dir.create(data_dir, recursive = TRUE)
+if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
+
+# 3) Download the ZIP via Kaggle REST API
+dataset_slug <- "kirtandelwadia/corporate-credit-rating-with-financial-ratios"
+zip_path     <- file.path(data_dir, "credit_rating.zip")
+download_url <- paste0("https://www.kaggle.com/api/v1/datasets/download/", dataset_slug)
+
+resp <- GET(
+  url             = download_url,
+  authenticate(user, key),
+  write_disk(zip_path, overwrite = TRUE),
+  config(followlocation = TRUE)
+)
+stop_for_status(resp)
+
+# 4) Unzip into data_dir
+unzipped <- unzip(zip_path, exdir = data_dir)
+csvs     <- unzipped[grepl("\\.csv$", unzipped)]
+if (length(csvs) == 0) stop("No CSV found in the downloaded ZIP.")
+
+# 5) Read the first CSV into R
+df_raw <- read.csv(csvs[1], stringsAsFactors = FALSE)
+
+# 6) Save to Input_Data/
+write.csv(
+  df_raw,
+  file      = file.path(input_dir, "df_raw.csv"),
+  row.names = FALSE
+)
+saveRDS(
+  df_raw,
+  file = file.path(input_dir, "df_raw.rds")
+)
+```
+
+
+```{r preprocess-2016, echo=TRUE, message=FALSE}
+# Ensure necessary packages are loaded
+library(dplyr)
+library(lubridate)
+library(janitor)
+library(tidyverse)
+
+# Read and clean raw CSV
+df_raw <- read_csv(file.path(input_dir, "df_raw.csv")) %>%
+  clean_names()
+
+# Define rating levels and create ordered factor
+target_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+
+df <- df_raw %>%
+  mutate(
+    rating_ord  = factor(rating, levels = target_levels, ordered = TRUE),
+    sector      = fct_lump_n(sector, 10),    # keep top 10 sectors
+    corporation = as.factor(corporation),
+    fiscal_year = year(ymd(rating_date)) %>% as.factor()
+  ) %>%
+  # Z-score scale selected continuous ratios
+  mutate(across(
+    c(current_ratio, debt_equity_ratio, gross_margin,
+      operating_margin, net_profit_margin, roa_return_on_assets),
+    ~ as.numeric(scale(.x)),
+    .names = "z_{col}"
+  )) %>%
+  drop_na(rating_ord, sector, corporation)
+
+# 1. Filter for rating date in 2016 and select only the needed variables
+#    - binary_rating: Binary.Rating as DV
+#    - rating      : Rating as DV
+#    - current_ratio, long_term_debt_capital, debt_equity_ratio,
+#      ebitda_margin, operating_cash_flow_per_share, sector: predictors
+
+df_filtered <- df %>%
+  filter(fiscal_year == "2016") %>%
+  select(
+    binary_rating,
+    rating,
+    current_ratio,
+    long_term_debt_capital,
+    debt_equity_ratio,
+    ebitda_margin,
+    operating_cash_flow_per_share,
+    net_profit_margin,
+    roe_return_on_equity,
+    roa_return_on_assets,
+    sector
+  )
+
+# 2. Create two dataframes with different target variables
+#    a) df_binary: Binary.Rating as the first column
+#    b) df_rating: Rating as the first column
+
+df_binary <- df_filtered %>%
+  select(
+    Binary.Rating                    = binary_rating,
+    Current.Ratio                    = current_ratio,
+    Long.term.Debt...Capital         = long_term_debt_capital,
+    Debt.Equity.Ratio                = debt_equity_ratio,
+    EBITDA.Margin                    = ebitda_margin,
+    Operating.Cash.Flow.Per.Share    = operating_cash_flow_per_share,
+    Net.Profit.Margin                = net_profit_margin,
+    ROE...Return.On.Equity           = roe_return_on_equity,
+    ROA...Return.On.Assets           = roa_return_on_assets,
+    Sector                           = sector
+  )
+
+
+df_rating <- df_filtered %>%
+  select(
+    Rating                          = rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )
+```
+
+
+b. Report the number of observations, columns (with their meaning) and their data types. Indicate clearly what you will use as dependent variable/label. 
+
+<!-- REPORT IT BELOW -->
+
+## 2. Split the data and tranform columns as necessary. (0.5pt)
+ Split the data into training (80%) and test set (80%). Transform the columns if necessary.
+
+```{r split-data, echo=TRUE, message=FALSE}
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+```
+
+## 3. Model Exploration (3pt)
+
+a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
+
+<!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
+
+{r, message = FALSE, results = "hide"}
+
+```{r}
+# Best performing
+library(brms)
+
+train_binary <- janitor::clean_names(train_binary)
+
+# Model formula
+formula <- bf(binary_rating ~ debt_equity_ratio + current_ratio +
+   roe_return_on_equity + net_profit_margin + 
+   roa_return_on_assets + (1 | sector))
+
+# Priors (informed from data exploration)
+priors <- c(
+  set_prior("normal(-0.5, 0.25)", class = "b", coef = "debt_equity_ratio"),
+  set_prior("normal(0.2, 0.3)", class = "b", coef = "current_ratio"),
+  set_prior("normal(0.4, 0.2)", class = "b", coef = "roe_return_on_equity"),
+  set_prior("normal(0.25, 0.2)", class = "b", coef = "net_profit_margin"),
+  set_prior("normal(0.5, 0.2)", class = "b", coef = "roa_return_on_assets"),
+  set_prior("normal(0, 2)", class = "Intercept"))
+
+
+# Fit final model using 6 chains and 4000 iterations
+final_model_chip <- brm(
+  formula = formula,
+  data = train_binary,
+  family = bernoulli(),
+  chains = 6,
+  iter = 4000,
+  seed = 123,
+  cores = 6,
+)
+
+```
+
+```{r}
+summary(final_model_chip)
+
+# For max Rhat:
+max_rhat <- max(rhat(final_model_chip))
+print(paste("Max Rhat:", max_rhat))
+
+# For ESS:
+min_bulk_ess <- min(neff_ratio(final_model_chip, type = "bulk"))
+min_tail_ess <- min(neff_ratio(final_model_chip, type = "tail"))
+print(paste("Min Bulk ESS:", min_bulk_ess))
+print(paste("Min Tail ESS:", min_tail_ess))
+
+# For divergent transitions (in Stan fit object):
+sum(final_model_chip$fit@sim$diagnostics$divergent__)
+
+# The model converged well, with Rhat values close to 1 and generally high effective sample sizes. Traceplots indicate good mixing. The fixed effects show mostly weak to moderate associations with the outcome. However, the calculated accuracy is currently 0%, likely due to misclassification when converting predicted probabilities to classes. After proper thresholding, this metric should be recalculated. We recommend conducting posterior predictive checks and verifying classification thresholds for more reliable evaluation.
+```
+
+b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
+
+Chip's model: 
+The model applied in this analysis is a Bayesian logistic regression model implemented using the brms package in R. It is designed to predict a binary outcome (binary_rating) based on several financial predictor variables. Specifically, the model estimates the probability that a given company receives a positive credit rating (coded as 1) as a function of five standardized financial ratios: debt-to-equity ratio, current ratio, return on equity, net profit margin, and return on assets. Since the dependent variable is binary, the model assumes a Bernoulli likelihood with a logit link function, making it a generalized linear model for classification tasks.
+In terms of structure, the model includes both population-level (fixed) effects and group-level (random) effects. The population-level effects correspond to the global coefficients for each financial predictor, which are assumed to have the same relationship with the outcome across all observations. Additionally, the model accounts for potential variation across industry sectors by including a random intercept for the variable sector, expressed as (1 | sector) in the model formula. This allows each sector to have its own baseline probability of a positive rating, while still sharing information with other sectors through partial pooling. This hierarchical structure helps capture unobserved heterogeneity in sector-specific risk profiles.
+The model also incorporates weakly informative priors to regularize the estimates and stabilize convergence. These priors are informed by preliminary data exploration. For example, the coefficient for debt_equity_ratio is given a prior of normal(-0.5, 0.25), reflecting an expectation of a negative association with credit rating, while roe_return_on_equity is assigned a normal(0.4, 0.2) prior to reflect a likely positive influence. The intercept is given a broader normal(0, 2) prior, and the standard deviation of the sector-level random effects is regularized with an exponential(1) prior. Overall, this structure enables the model to balance flexibility with domain-informed constraints, improving its generalizability and interpretability.
+
+
+
+<!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+
+## 4. Model checking (3pt)
+
+a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
+
+```{r}
+# Chip's model
+# Predict on test set (e.g., test_binary)
+test_binary <- janitor::clean_names(test_binary)
+preds <- predict(final_model_chip, newdata = test_binary, summary = TRUE)
+
+```
+
+```{r}
+predicted_class <- ifelse(preds[, "Estimate"] >= 0.5, 1, 0)
+true_class <- as.integer(test_binary$binary_rating)
+
+accuracy <- mean(predicted_class == true_class)
+print(paste("Accuracy:", accuracy * 100, "%"))
+
+```
+
+```{r}
+accuracy <- mean(predicted_classes == true_classes)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+
+# Confusion Matrix
+table(Predicted = predicted_class, Actual = true_classes)
+
+```
+
+```{r}
+install.packages("priorsense")
+library(priorsense)
+# 1. Define your original priors (same as before)
+priors_informed <- c(
+  set_prior("normal(-0.5, 0.25)", class = "b", coef = "debt_equity_ratio"),
+  set_prior("normal(0.2, 0.3)", class = "b", coef = "current_ratio"),
+  set_prior("normal(0.4, 0.2)", class = "b", coef = "roe_return_on_equity"),
+  set_prior("normal(0.25, 0.2)", class = "b", coef = "net_profit_margin"),
+  set_prior("normal(0.5, 0.2)", class = "b", coef = "roa_return_on_assets"),
+  set_prior("normal(0, 2)", class = "Intercept")
+)
+
+# 2. Define your model formula
+formula <- bf(binary_rating ~ debt_equity_ratio + current_ratio +
+              roe_return_on_equity + net_profit_margin + 
+              roa_return_on_assets)
+
+# 3. Fit the model *with sample_prior = "yes"*
+model_informed <- brm(
+  formula = formula,
+  data = train_binary,
+  family = bernoulli(),
+  prior = priors_informed,
+  sample_prior = "yes",    # required for powerscale_sensitivity
+  chains = 6,
+  iter = 4000,
+  seed = 123,
+  cores = 6
+)
+
+# 4. Run the prior sensitivity analysis
+ps_result <- powerscale_sensitivity(model_informed)
+
+# 5. Plot sensitivity
+plot(ps_result)
+```
+Chip's model: 
+We conducted a prior sensitivity analysis using powerscale_sensitivity() and found that the posterior estimates were primarily driven by the likelihood rather than the prior. The diagnostic plot showed that the influence of the priors was minimal across parameters, with the majority of the posterior variability attributed to the data. This indicates that the model is robust to the chosen priors and that our conclusions are not overly sensitive to prior assumptions.
+
+
+<!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
+
+b. Conduct posterior predictive checks for each model to assess how well they fit the data.
+Explain what you conclude.
+
+
+```{r}
+# Chip's Model #
+# posterior-predictive draws
+yrep <- posterior_predict(final_model_chip, draws = 4000)
+
+# convert outcome to numeric 0/1
+y_obs <- as.numeric(as.character(train_binary$binary_rating))
+
+# quick mean check
+c(Observed = mean(y_obs), Predicted = mean(colMeans(yrep)))
+
+# default bayesplot PPCs
+ppc_bars(y_obs, yrep, prob = 0.9)
+ppc_bars_grouped(y_obs, yrep, group = train_binary$sector, prob = 0.9)
+
+```
+
+
+
+<!-- EXPLAIN CONCLUSIONS -->
+
+## 5. Model Comparison (1.5pt)
+
+a. Use k-fold cross-validation to compare the models.
+
+```{r}
+```
+b. Determine the best model based on predictive accuracy and justify your decision.
+
+<!-- DECISION -->
+
+
+## 6. Interpretation of Important Parameters (1.5pt)
+
+Choose one of the best models and interpret its most important parameters.
+
+<!-- INTERPRETATION AND CODE GOES HERE -->
+ 
+
+
+# Contributions of each member 
+
+-
+-
+-
+-
+
+# Statement of technology
+
+
+# References
+
+<!-- Complete if necessary -->
+
