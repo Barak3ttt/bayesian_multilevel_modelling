@@ -8,7 +8,8 @@ author:
   • Set up the GitHub repository to streamline collaboration.
   • Developed the initial model.
   • Completed the mandatory model-related documentation.
-  • Performed both prior sensitivity analysis and posterior predictive checks 
+  • Performed both prior sensitivity analysis and posterior predictive checks
+  • Documented the interpretation of both prior sensitivity analysis and posterior predictive checks
   • Conducted the k-fold cross validation model comparison.
   
   Jacob
@@ -18,7 +19,8 @@ author:
   Lilyanish
   • Developed a model.
   • Completed the mandatory model-related documentation.
-  • Performed both prior sensitivity analysis and posterior predictive checks 
+  • Performed both prior sensitivity analysis and posterior predictive checks
+  • Documented the interpretation of both prior sensitivity analysis and posterior predictive checks
   • Completed the mandatory model-related documentation.
 
   
