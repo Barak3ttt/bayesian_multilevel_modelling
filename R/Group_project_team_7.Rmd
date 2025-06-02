@@ -1,0 +1,1613 @@
+--
+title: "Group project"
+subtitle: "7"
+author: 
+  Barak Azor
+  • Located and preprocessed the dataset.
+  • Formulated the research question(s).
+  • Set up the GitHub repository to streamline collaboration.
+  • Developed the initial model.
+  • Completed the mandatory model-related documentation.
+  • Performed both prior sensitivity analysis and posterior predictive checks 
+  • Conducted the k-fold cross validation model comparison.
+  
+  Jacob
+  • Developed a model.
+  • Completed the mandatory model-related documentation.
+  
+  Lilyanish
+  • Developed a model.
+  • Completed the mandatory model-related documentation.
+  • Performed both prior sensitivity analysis and posterior predictive checks 
+  • Completed the mandatory model-related documentation.
+
+  
+  Chip Snepvangers
+  • Developed a model.
+  • Completed all mandatory model-related documentation.
+  • Provided a detailed response to Question 6 concerning parameter interpretation
+  • Performed prior sensitivity analysis
+
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_download: false
+---
+
+```{r setup, include = FALSE}
+options(max.print= 120,
+        width = 90,
+        tibble.width = 80)
+knitr::opts_chunk$set(echo= TRUE,
+                      cache=FALSE,
+                      prompt=FALSE,
+                      tidy="styler",
+                      comment=NA,
+                      message=FALSE,
+                      warning=TRUE)
+
+knitr::opts_knit$set(width=90)
+knitr::opts_chunk$set(cache.extra = knitr::rand_seed)
+set.seed(42)
+```
+
+# Checklist {-}
+
+The submission includes the following.
+
+- [ X ] RMD document where it's clear what is the code that corresponds to each question. 
+- [ X ] Dataset
+- [ X ] html/PDF document with the following
+    - [ X ] Numbered questions and answers with text and all the necessary code.
+    - [ X] Subtitle indicates the group number 
+    - [ X ] Name of all group members
+    - [ X ] Details of specification of the work done by group members (e.g., who found the data, who did the pre-processing, who answered which questions, etc).
+    - [ X ] Statement of technology. Did you use any AI tools? How?
+
+
+# Group project {-}
+
+For the project, we use the following packages:
+
+```{r, message = FALSE}
+## ...
+```
+
+## 1. Dataset Selection (0.5pt)
+Select a dataset with clusters such as schools, regions, or people with multiple observations per individual. (From for example, https://www.kaggle.com/) It would be a good idea to choose a smallish dataset (not too many rows, e.g., less than 1000) or subset it so that fitting the models doesn't take too long. 
+
+a. Describe the dataset with a couple of short sentences. What was its intended use? Are there papers that reference it? Provide information on how to obtain the dataset, including its source and any necessary preprocessing steps/feature engineering.
+
+We selected the Corporate Credit Rating dataset from Kaggle (https://www.kaggle.com/datasets/kirtandelwadia/corporate-credit-rating-with-financial-ratios) because it aligns directly with our objective of classifying firms into credit rating categories using financial indicators. The dataset offers a comprehensive collection of firm-level financial ratios—such as leverage, liquidity, profitability, and growth metrics—alongside credit ratings from established agencies. This rich combination of explanatory variables and a clearly defined target variable provides a suitable foundation for applying and evaluating Bayesian multilevel classification models. Any preprocessing steps can be seen below.
+
+<!-- DESCRIBE IT BELOW -->
+
+```{r get-data-direct, echo=TRUE, message=FALSE}
+# 0) Install & load httr for HTTP requests
+if (!requireNamespace("httr", quietly = TRUE)) {
+  install.packages("httr", repos = "https://cran.rstudio.com/")
+}
+library(httr)
+
+# 1) Kaggle credentials
+user <- "barakazor"
+key  <- "6bfceda688e1452d09191636ad94eeeb"
+
+# 2) Define working and data directories
+wd        <- getwd()
+data_dir  <- file.path(wd, "data")
+input_dir <- file.path(wd, "Input_Data")
+if (!dir.exists(data_dir))  dir.create(data_dir, recursive = TRUE)
+if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
+
+# 3) Download the ZIP via Kaggle REST API
+dataset_slug <- "kirtandelwadia/corporate-credit-rating-with-financial-ratios"
+zip_path     <- file.path(data_dir, "credit_rating.zip")
+download_url <- paste0("https://www.kaggle.com/api/v1/datasets/download/", dataset_slug)
+
+resp <- GET(
+  url             = download_url,
+  authenticate(user, key),
+  write_disk(zip_path, overwrite = TRUE),
+  config(followlocation = TRUE)
+)
+stop_for_status(resp)
+
+# 4) Unzip into data_dir
+unzipped <- unzip(zip_path, exdir = data_dir)
+csvs     <- unzipped[grepl("\\.csv$", unzipped)]
+if (length(csvs) == 0) stop("No CSV found in the downloaded ZIP.")
+
+# 5) Read the first CSV into R
+df_raw <- read.csv(csvs[1], stringsAsFactors = FALSE)
+
+# 6) Save to Input_Data/
+write.csv(
+  df_raw,
+  file      = file.path(input_dir, "df_raw.csv"),
+  row.names = FALSE
+)
+saveRDS(
+  df_raw,
+  file = file.path(input_dir, "df_raw.rds")
+)
+```
+
+
+```{r preprocess-2016, echo=TRUE, message=FALSE}
+# Load necessary packages (install if needed)
+library(readr)
+library(dplyr)
+library(janitor)
+library(lubridate)
+
+# Read raw data and clean column names explicitly
+input_dir <- file.path(wd, "Input_Data")   # adjust as needed
+df_raw <- read_csv(file.path(input_dir, "df_raw.csv"))
+
+# Use janitor::clean_names to ensure availability
+df_raw <- janitor::clean_names(df_raw)
+
+# Define ordered rating levels
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+
+# Create df with fiscal_year and scaled predictors
+df <- df_raw %>%
+  mutate(
+    rating_ord  = factor(rating, levels = rating_levels, ordered = TRUE),
+    sector      = forcats::fct_lump_n(sector, 10),
+    corporation = as.factor(corporation),
+    fiscal_year = lubridate::year(lubridate::ymd(rating_date))
+  ) %>%
+  mutate(across(
+    c(current_ratio, debt_equity_ratio, gross_margin,
+      operating_margin, net_profit_margin, roa_return_on_assets),
+    ~ as.numeric(scale(.x)), .names = "z_{col}")) %>%
+  tidyr::drop_na(rating_ord, sector, corporation)
+
+
+
+# 1. Filter for rating date in 2016 and select only the needed variables
+#    - binary_rating: Binary.Rating as DV
+#    - rating      : Rating as DV
+#    - current_ratio, long_term_debt_capital, debt_equity_ratio,
+#      ebitda_margin, operating_cash_flow_per_share, sector: predictors
+
+df_filtered <- df %>%
+  filter(fiscal_year == 2016) %>%
+  select(
+    rating_ord,                     
+    binary_rating,
+    rating,
+    current_ratio,
+    long_term_debt_capital,
+    debt_equity_ratio,
+    ebitda_margin,
+    operating_cash_flow_per_share,
+    net_profit_margin,
+    roe_return_on_equity,
+    roa_return_on_assets,
+    sector
+  )
+
+
+
+# 2. Create two dataframes with different target variables
+#    a) df_binary: Binary.Rating as the first column
+#    b) df_rating: Rating as the first column
+
+df_binary <- df_filtered %>%
+  select(
+    Binary.Rating                    = binary_rating,
+    Current.Ratio                    = current_ratio,
+    Long.term.Debt...Capital         = long_term_debt_capital,
+    Debt.Equity.Ratio                = debt_equity_ratio,
+    EBITDA.Margin                    = ebitda_margin,
+    Operating.Cash.Flow.Per.Share    = operating_cash_flow_per_share,
+    Net.Profit.Margin                = net_profit_margin,
+    ROE...Return.On.Equity           = roe_return_on_equity,
+    ROA...Return.On.Assets           = roa_return_on_assets,
+    Sector                           = sector
+  )
+
+
+df_rating <- df_filtered %>%
+  select(
+    Rating                          = rating_ord,
+    Binary.Rating = binary_rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector)
+```
+
+
+b. Report the number of observations, columns (with their meaning) and their data types. Indicate clearly what you will use as dependent variable/label. 
+
+Lilyana's model: Bayesian ordinal regression model using a cumulative logit link that models the ordinal rating based on financial predictors. The financial predictors are assum ed to have the same effects across all sectors. This model assumes that ratings may be systematically higher in some sectors (e.g. tech) independent of the selected financial variables.
+
+
+
+## 2. Split the data and tranform columns as necessary. (0.5pt)
+ Split the data into training (80%) and test set (80%). Transform the columns if necessary.
+
+```{r splitdata, echo=TRUE, message=FALSE}
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+```
+
+## 3. Model Exploration (3pt)
+
+a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
+
+```{r hyperoptimization_Barak_Logistic_Regression, echo=TRUE, message=FALSE}
+# bayes_opt_25_rBayes.R
+# Bayesian hyper‑parameter optimisation (25 evaluations) using **rBayesianOptimization**
+# instead of ParBayesianOptimization to avoid the inBounds NA bug.
+
+
+#--------------------NO NEED TO RUN, RESULTS STORED ALREADY---------------------
+
+# 0. Install / load packages ---------------------------------------------------
+required_pkgs <- c("brms", "loo", "rBayesianOptimization", "progress")
+for (pkg in required_pkgs) if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+
+library(brms)
+library(loo)
+library(rBayesianOptimization)   # <‑‑ different optimiser
+library(progress)
+
+# 1. Search space --------------------------------------------------------------
+search_bounds <- list(
+  sigma_fixed = c(0.5, 10),
+  sigma_group = c(0.5, 5),
+  adapt_delta = c(0.90, 0.99),
+  iter        = c(1000, 2000)
+)
+
+# helper to snap iter to 1000 / 1500 / 2000
+snap_iter <- function(x) {
+  cuts <- c(1000, 1500, 2000)
+  cuts[which.min(abs(cuts - x))]
+}
+
+# 2. Objective function --------------------------------------------------------
+obj_fun <- function(sigma_fixed, sigma_group, adapt_delta, iter) {
+  iter   <- snap_iter(iter)
+  warmup <- iter / 2
+
+  priors <- c(
+    prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+    prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+  )
+
+  score <- tryCatch({
+    fit <- brm(
+      Binary.Rating ~ Current.Ratio +
+                     `Long.term.Debt...Capital` +
+                     Debt.Equity.Ratio +
+                     EBITDA.Margin +
+                     `Operating.Cash.Flow.Per.Share` +
+                     (1 | Sector),
+      data    = train_binary,
+      family  = bernoulli(link = "logit"),
+      prior   = priors,
+      iter    = iter,
+      warmup  = warmup,
+      control = list(adapt_delta = adapt_delta, max_treedepth = 12),
+      cores   = 4,
+      refresh = 0
+    )
+    -loo(fit, cores = 2)$estimates["looic", "Estimate"]  # maximise
+  }, error = function(e) {
+    message("Penalty – ", e$message)
+    -1e6
+  })
+
+  list(Score = score)
+}
+
+# 3. Run Bayesian optimisation -------------------------------------------------
+set.seed(123)
+opt <- BayesianOptimization(
+  FUN = obj_fun,
+  bounds = search_bounds,
+  init_points = 10,
+  n_iter      = 15,
+  acq = "ucb", kappa = 2.576,
+  verbose = TRUE
+)
+
+print(opt$Best_Par)
+```
+```{r hyperparamater_saving, echo=TRUE, message=FALSE}
+
+# 1) Build (and create) your output directory
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  dir.create(hyper.out.dir, recursive = TRUE)
+}
+
+# 2) Construct file paths
+stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+csv_file <- file.path(
+  hyper.out.dir,
+  paste0("best_params_", stamp, ".csv")
+)
+rds_file <- file.path(
+  hyper.out.dir,
+  paste0("rBayesOpt_res_", stamp, ".rds")
+)
+
+# 3) Write the best‐params CSV
+write.csv(
+  opt$Best_Par,   # the best‐parameter data.frame
+  file = csv_file,
+  row.names = FALSE
+)
+
+# 4) Save the full optimization result as an RDS
+saveRDS(
+  opt,           # the full ParBayesianOptimization result object
+  file = rds_file
+)
+
+```
+
+```{r Chips_Logistic_Regression_Exploration, echo=TRUE, message=FALSE, warning=FALSE}
+# Ensure the brms model object is available (it should be if the hyperparameter chunk ran)
+if (!exists("fit_cumulative_cloglog_intercepts")) {
+  stop("Model object 'fit_cumulative_cloglog_intercepts' not found. Please ensure the model fitting chunk has been run.")
+}
+
+# Ensure the test_rating dataset is available
+if (!exists("test_rating")) {
+  stop("Test dataset 'test_rating' not found. Please ensure the data splitting chunk has been run.")
+}
+
+# Load necessary library for metrics if not already loaded
+if (!requireNamespace("caret", quietly = TRUE)) {
+  install.packages("caret", repos = 'https://cran.rstudio.com/')
+}
+library(caret)
+
+# Define rating levels and investment grade threshold
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+investment_grade_ratings <- c("AAA","AA+","AA","AA-","A+","A","A-", "BBB+","BBB","BBB-")
+
+# Ensure Rating in test_rating is an ordered factor with correct levels
+test_rating$Rating <- factor(test_rating$Rating, levels = rating_levels, ordered = TRUE)
+
+# 1. Predict probabilities for each category on the test set
+# posterior_epred gives expected probabilities for each category
+# Using a smaller number of draws for faster execution during knitting, increase for more stable estimates.
+pred_probs_ordinal <- posterior_epred(fit_cumulative_cloglog_intercepts, newdata = test_rating, ndraws = 500) 
+
+# pred_probs_ordinal is an array: (draws, observations, categories)
+# We want the mean probability for each category for each observation
+mean_pred_probs_ordinal <- colMeans(pred_probs_ordinal) # Now (observations, categories)
+if(ncol(mean_pred_probs_ordinal) == length(rating_levels)){
+    colnames(mean_pred_probs_ordinal) <- rating_levels # Assign category names
+} else {
+    stop("Mismatch between number of predicted categories and length of rating_levels.")
+}
+
+
+# 2. Calculate the total probability of being investment grade for each observation
+prob_investment_grade <- rowSums(mean_pred_probs_ordinal[, intersect(colnames(mean_pred_probs_ordinal), investment_grade_ratings), drop = FALSE])
+
+# 3. Convert to binary predictions ("Investment" vs "Speculative") using a 0.5 threshold
+predicted_binary_labels <- ifelse(prob_investment_grade >= 0.5, "Investment", "Speculative")
+predicted_binary_labels <- factor(predicted_binary_labels, levels = c("Investment", "Speculative"))
+
+# 4. Determine true binary labels from test_rating
+true_binary_labels <- ifelse(test_rating$Rating %in% investment_grade_ratings, "Investment", "Speculative")
+true_binary_labels <- factor(true_binary_labels, levels = c("Investment", "Speculative"))
+
+# 5. Compute and print confusion matrix and metrics
+# Check if there is variability in both true and predicted labels
+if (length(unique(predicted_binary_labels)) < 2 || length(unique(true_binary_labels)) < 2) {
+    message("Warning: One or both factors (predicted or true labels) have fewer than 2 levels (e.g., all predictions are 'Investment').")
+    message("Standard confusion matrix metrics from caret might not be meaningful or directly computable in this scenario.")
+    message("Predicted distribution:")
+    print(table(predicted_binary_labels))
+    message("True distribution:")
+    print(table(true_binary_labels))
+    # Add custom calculations if needed for this edge case, e.g. accuracy if all match.
+    if(length(unique(predicted_binary_labels)) == 1 && length(unique(true_binary_labels)) == 1 && unique(predicted_binary_labels) == unique(true_binary_labels)){
+      cat("Accuracy: 100% (all predictions match the single true class)\n")
+    } else {
+      cat("Accuracy, Precision, Recall, F1 cannot be reliably calculated by caret.\n")
+    }
+} else {
+    conf_matrix_obj <- confusionMatrix(data = predicted_binary_labels, 
+                                     reference = true_binary_labels, 
+                                     positive = "Investment")
+
+    print(conf_matrix_obj$table) # Print the confusion matrix table
+
+    accuracy <- conf_matrix_obj$overall["Accuracy"]
+    precision <- conf_matrix_obj$byClass["Precision"]
+    recall <- conf_matrix_obj$byClass["Recall"]
+    f1_score <- conf_matrix_obj$byClass["F1"]
+
+    cat("\nBinary Classification Metrics (Positive Class: 'Investment'):\n")
+    cat("Accuracy: ", ifelse(is.na(accuracy), "NA", round(accuracy, 4)), "\n")
+    cat("Precision: ", ifelse(is.na(precision), "NA", round(precision, 4)), "\n")
+    cat("Recall (Sensitivity): ", ifelse(is.na(recall), "NA", round(recall, 4)), "\n")
+    cat("F1-Score: ", ifelse(is.na(f1_score), "NA", round(f1_score, 4)), "\n")
+}
+```
+
+
+<!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
+
+{r, message = FALSE, results = "hide"}
+# models go here
+
+```{r Barak_Logistic_Bayesian_Regression, echo=TRUE, message=FALSE}
+# final_model_fit.R
+# Fit a Bayesian multilevel logistic regression using the best hyperparameters
+# (reads them directly from the uploaded CSV)
+
+# 1. Load libraries (will error if not installed) ----------------------------
+library(brms)
+library(pROC)
+
+# ---------------------------------------------------------------------------
+# 2. Locate the best-params CSV ---------------------------------------------
+# ---------------------------------------------------------------------------
+# Assuming your working directory is stored in the variable `wd`.
+# The CSV is expected in: <wd>/Hyperparameter_Optimization/
+
+if (!exists("wd")) {
+  wd <- getwd()  # fallback – uses current working directory
+  message(sprintf("`wd` not found; defaulting to getwd(): %s", wd))
+}
+
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  stop(sprintf("Directory '%s' does not exist – check `wd`.", hyper.out.dir))
+}
+
+csv_files <- list.files(hyper.out.dir, pattern = "^best_params_.*\\.csv$", full.names = TRUE)
+if (length(csv_files) == 0) {
+  stop("No 'best_params_*.csv' file found in ", hyper.out.dir)
+}
+
+# Pick the newest file (in case multiple exist)
+csv_file <- csv_files[order(file.info(csv_files)$mtime, decreasing = TRUE)][1]
+message(sprintf("Reading hyperparameters from: %s", basename(csv_file)))
+
+best_params_df <- read.csv(csv_file, stringsAsFactors = FALSE)
+
+# ---------------------------------------------------------------------------
+# 3. Extract hyperparameters with sane fallbacks ----------------------------
+# ---------------------------------------------------------------------------
+get_or <- function(df, name, default) {
+  if (name %in% names(df)) df[[name]][1] else default
+}
+
+sigma_fixed <- get_or(best_params_df, "sigma_fixed", 2.5)
+sigma_group <- get_or(best_params_df, "sigma_group", 1.5)
+adapt_delta <- get_or(best_params_df, "adapt_delta", 0.95)
+iter        <- get_or(best_params_df, "iter", 1500)
+warmup      <- floor(iter / 2)
+
+# ---------------------------------------------------------------------------
+# 4. Define priors -----------------------------------------------------------
+# ---------------------------------------------------------------------------
+priors <- c(
+  prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+
+# ---------------------------------------------------------------------------
+# 5. Fit model on `train_binary` ---------------------------------------------
+# ---------------------------------------------------------------------------
+fit <- brm(
+  formula = bf(
+    Binary.Rating ~ Current.Ratio +
+                   `Long.term.Debt...Capital` +
+                   Debt.Equity.Ratio +
+                   EBITDA.Margin +
+                   `Operating.Cash.Flow.Per.Share` +
+                   (1 | Sector)
+  ),
+  data    = train_binary,
+  family  = bernoulli(link = "logit"),
+  prior   = priors,
+  iter    = iter,
+  warmup  = warmup,
+  control = list(adapt_delta = adapt_delta, max_treedepth = 12),
+  cores   = 4,
+  refresh = 100
+)
+
+# ---------------------------------------------------------------------------
+# 6. Evaluate on `test_binary` ----------------------------------------------
+# ---------------------------------------------------------------------------
+probs <- colMeans(posterior_linpred(fit, newdata = test_binary, transform = TRUE))
+
+pred_class <- factor(ifelse(probs > 0.5, 1, 0), levels = c(0, 1))
+true_class <- test_binary$Binary.Rating
+
+conf_mat <- table(Predicted = pred_class, Actual = true_class)
+accuracy  <- sum(diag(conf_mat)) / sum(conf_mat)
+precision <- conf_mat["1", "1"] / sum(conf_mat["1", ])
+recall    <- conf_mat["1", "1"] / sum(conf_mat[, "1"])
+f1_score  <- 2 * precision * recall / (precision + recall)
+
+roc_obj   <- roc(as.numeric(as.character(true_class)), probs)
+auc_value <- auc(roc_obj)
+
+# ---------------------------------------------------------------------------
+# 7. Report ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+print(conf_mat)
+
+
+# Build a small data‑frame and round only the numeric column -----------------
+metrics <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1 Score", "ROC AUC"),
+  Value  = c(accuracy, precision, recall, f1_score, auc_value)
+)
+metrics$Value <- round(metrics$Value, 3)
+print(metrics, row.names = FALSE)
+
+# In case you still want individual lines in the console (use cat so they
+# always show up in stdout)
+cat(sprintf("\nAccuracy : %.3f\n", accuracy))
+cat(sprintf("Precision: %.3f\n", precision))
+cat(sprintf("Recall   : %.3f\n", recall))
+cat(sprintf("F1 Score : %.3f\n", f1_score))
+cat(sprintf("ROC AUC  : %.3f\n\n", auc_value))
+
+# basic model diagnostics
+print(fit)            # quick coefficients & R-hat
+summary(fit)          # full convergence stats
+bayesplot::mcmc_trace(as.array(fit))   # trace plots if you have bayesplot installed
+
+# posterior predictive check
+pp_check(fit)
+
+# loo object for more detail (elpd, Pareto-k, etc.)
+l <- loo(fit, cores = 2)
+print(l)
+
+```
+
+
+
+
+```{r Lilyanish_Ordinal_Model}
+
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+
+#standardizing predictors so that priors later are easier to set 
+predictorers <- c("Current.Ratio",
+                  "Long.term.Debt...Capital",
+                  "Debt.Equity.Ratio",
+                  "EBITDA.Margin",
+                  "Operating.Cash.Flow.Per.Share")
+#Lilyana codee
+library(brms)
+
+model_l1 <- brm(
+  formula = Rating ~ Debt.Equity.Ratio + Current.Ratio + 
+    EBITDA.Margin + Operating.Cash.Flow.Per.Share + Long.term.Debt...Capital +
+    ( 1 | Sector),
+  data = train_rating,
+  family = cumulative("logit"),
+  seed = 123
+)
+summary(model_l1)
+##All Rhat values = 1.00 => convergence
+## Bulk and tail ESS >1000 & no warnings 
+#pp checks lookedd good too 
+#pp_check(model_l1)
+#pp_check(model_l1, type="stat_2d")
+#plot(model_l1) #nice fuzzy plots
+```
+
+```{r Jacob_Ordinal_Model, echo=TRUE, message=FALSE}
+# parbayes_opt.R
+# R script for Bayesian hyperparameter optimization using ParBayesianOptimization
+
+# 0. Install and load packages
+if (!requireNamespace("ParBayesianOptimization", quietly = TRUE)) {
+  install.packages("ParBayesianOptimization", repos = 'https://cran.rstudio.com/')
+}
+if (!requireNamespace("brms", quietly = TRUE)) {
+  install.packages("brms", repos = 'https://cran.rstudio.com/')
+}
+if (!requireNamespace("loo", quietly = TRUE)) {
+  install.packages("loo", repos = 'https://cran.rstudio.com/')
+}
+library(ParBayesianOptimization)
+library(brms)
+library(loo)
+
+# 1. Prepare training data
+# Ensure 'train_binary' exists (this part is for the original bernoulli model, can be left)
+if (!exists("train_binary")) {
+  train_binary <- read.csv("Input_Data/df_binary.csv")
+  train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+}
+
+# --- BEGIN MODIFIED BRM MODEL CALL ---
+# Define priors for the cumulative model with cloglog link and random intercepts
+cloglog_intercept_priors <- c(
+  prior(normal(0, 1.5), class = b),  # For all fixed effects, including interaction
+  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
+  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+)
+
+# Ensure train_rating is available and Rating is an ordered factor
+# It should be from the splitdata chunk, but we make sure Rating is ordered here.
+if (!exists("train_rating")) {
+    stop("train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.")
+}
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+train_rating$Rating <- factor(train_rating$Rating, levels = rating_levels, ordered = TRUE)
+
+
+# Fit a standalone brms model (cumulative with cloglog link and random intercepts only)
+print("Fitting a cumulative brm model with cloglog link and random intercepts...")
+fit_cumulative_cloglog_intercepts <- brm(
+  formula = bf(
+    Rating ~ Current.Ratio * Debt.Equity.Ratio + # Includes Current.Ratio, Debt.Equity.Ratio, and their interaction
+             `Long.term.Debt...Capital` +
+             EBITDA.Margin +
+             `Operating.Cash.Flow.Per.Share` +
+             (1 | Sector) # Random intercepts for Sector
+  ),
+  data    = train_rating,
+  family  = cumulative(link = "cloglog"), # Cumulative likelihood with cloglog link
+  prior   = cloglog_intercept_priors,
+  iter    = 2000,
+  warmup  = 1000,
+  control = list(adapt_delta = 0.95),
+  cores   = 4,
+  refresh = 0,
+  seed    = 123
+)
+print("Cumulative cloglog brm model fitting complete.")
+print(summary(fit_cumulative_cloglog_intercepts))
+# --- END MODIFIED BRM MODEL CALL ---
+
+# 2. Define the objective function with error handling
+# Returns a list with 'Score' to maximize (we use -LOOIC)
+# obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
+#   result <- tryCatch({
+#     # Build dynamic priors as strings
+#     priors <- c(
+#       prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
+#       prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
+#     )
+# 
+#     # Fit the brms model
+#     fit <- brm(
+#       formula = bf(
+#         Binary.Rating ~ Current.Ratio +
+#                         `Long.term.Debt...Capital` +
+#                         Debt.Equity.Ratio +
+#                         EBITDA.Margin +
+#                         `Operating.Cash.Flow.Per.Share` +
+#                         (1 | Sector)
+#       ),
+#       data    = train_binary,
+#       family  = bernoulli(link = "logit"),
+#       prior   = priors,
+#       iter    = 1000,
+#       warmup  = 500,
+#       control = list(adapt_delta = adapt_delta),
+#       cores   = 4,
+#       refresh = 0
+#     )
+# 
+#     # Compute LOOIC
+#     looic_val <- loo(fit)$estimates["looic", "Estimate"]
+#     list(Score = -looic_val)
+#   }, error = function(e) {
+#     message("Objective error: ", e$message)
+#     return(NULL)
+#   })
+#   return(result)
+# }
+
+# 3. Define search bounds
+# bounds <- list(
+#   sigma_fixed = c(0.1, 10),
+#   sigma_group = c(0.1, 5),
+#   adapt_delta = c(0.8, 0.99)
+# )
+
+# 4. Run Bayesian Optimization with progress reporting
+# set.seed(123)
+# opt_res <- bayesOpt(
+#   FUN           = obj_fun,
+#   bounds        = bounds,
+#   initPoints    = 5,
+#   iters.n       = 15,
+#   acq           = "ucb",       # Upper confidence bound
+#   kappa         = 2.576,         # exploration/exploitation trade-off
+#   verbose       = 2,             # textual progress
+#   plotProgress  = TRUE,          # acquisition plot
+#   dropNull      = TRUE           # skip failed evaluations
+# )
+
+# 5. Examine best hyperparameters
+# best_params <- getBestPars(opt_res)
+# print(best_params)
+```
+
+While the primary model (`fit_cumulative_cloglog_intercepts`) predicts ordinal ratings, we can derive binary classification metrics by defining a threshold to group these ratings. For this exercise, we will classify ratings as either "Investment Grade" (AAA down to BBB-) or "Speculative Grade" (BB+ down to D).
+
+We will predict probabilities for each rating category on the test set, sum the probabilities for all investment grade categories, and then use a 0.5 probability threshold on this sum to make a binary prediction.
+
+
+
+```{r Chip_Logisic_Regression_Model}
+# Best performing
+library(brms)
+
+train_binary <- janitor::clean_names(train_binary)
+
+# Model formula
+formula <- bf(binary_rating ~ debt_equity_ratio + current_ratio +
+   roe_return_on_equity + net_profit_margin + 
+   roa_return_on_assets + (1 | sector))
+
+# Priors (informed from data exploration)
+priors <- c(
+  set_prior("normal(-0.5, 0.25)", class = "b", coef = "debt_equity_ratio"),
+  set_prior("normal(0.2, 0.3)", class = "b", coef = "current_ratio"),
+  set_prior("normal(0.4, 0.2)", class = "b", coef = "roe_return_on_equity"),
+  set_prior("normal(0.25, 0.2)", class = "b", coef = "net_profit_margin"),
+  set_prior("normal(0.5, 0.2)", class = "b", coef = "roa_return_on_assets"),
+  set_prior("normal(0, 2)", class = "Intercept"))
+
+
+# Fit final model using 6 chains and 4000 iterations
+final_model_chip <- brm(
+  formula = formula,
+  data = train_binary,
+  family = bernoulli(),
+  chains = 6,
+  iter = 4000,
+  seed = 123,
+  cores = 6,
+)
+
+```
+
+
+```{r}
+# Best performing
+library(brms)
+
+train_binary <- janitor::clean_names(train_binary)
+
+# Model formula
+formula <- bf(binary_rating ~ debt_equity_ratio + current_ratio +
+   roe_return_on_equity + net_profit_margin + 
+   roa_return_on_assets + (1 | sector))
+
+# Priors (informed from data exploration)
+priors <- c(
+  set_prior("normal(-0.5, 0.25)", class = "b", coef = "debt_equity_ratio"),
+  set_prior("normal(0.2, 0.3)", class = "b", coef = "current_ratio"),
+  set_prior("normal(0.4, 0.2)", class = "b", coef = "roe_return_on_equity"),
+  set_prior("normal(0.25, 0.2)", class = "b", coef = "net_profit_margin"),
+  set_prior("normal(0.5, 0.2)", class = "b", coef = "roa_return_on_assets"),
+  set_prior("normal(0, 2)", class = "Intercept"))
+
+
+# Fit final model using 6 chains and 4000 iterations
+final_model_chip <- brm(
+  formula = formula,
+  data = train_binary,
+  family = bernoulli(),
+  chains = 6,
+  iter = 4000,
+  seed = 123,
+  cores = 6,
+)
+
+summary(final_model_chip)
+
+# For max Rhat:
+max_rhat <- max(rhat(final_model_chip))
+print(paste("Max Rhat:", max_rhat))
+
+# For ESS:
+min_bulk_ess <- min(neff_ratio(final_model_chip, type = "bulk"))
+min_tail_ess <- min(neff_ratio(final_model_chip, type = "tail"))
+print(paste("Min Bulk ESS:", min_bulk_ess))
+print(paste("Min Tail ESS:", min_tail_ess))
+
+# For divergent transitions (in Stan fit object):
+sum(final_model_chip$fit@sim$diagnostics$divergent__)
+```
+
+```{r}
+library(pROC)     # for AUC
+library(caret)    # for confusionMatrix
+library(dplyr)    # for tibble and data manipulation
+
+# Predict posterior probabilities for class 1
+pred_probs <- posterior_epred(final_model_chip, newdata = train_binary, re_formula = NA) %>% 
+  apply(2, mean)  # average over posterior draws
+
+# Convert probabilities to class predictions using threshold (e.g., 0.5)
+pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+
+# True values
+true_class <- train_binary$binary_rating
+
+# Confusion matrix
+conf_mat <- caret::confusionMatrix(
+  data = as.factor(pred_class),
+  reference = as.factor(true_class),
+  positive = "1"
+)
+
+# Compute AUC
+roc_obj <- roc(true_class, pred_probs)
+auc_value <- as.numeric(auc(roc_obj))
+
+# Output metrics
+cat(sprintf("Accuracy : %.3f\n", conf_mat$overall["Accuracy"]))
+cat(sprintf("Precision: %.3f\n", conf_mat$byClass["Precision"]))
+cat(sprintf("Recall   : %.3f\n", conf_mat$byClass["Recall"]))
+cat(sprintf("F1 Score : %.3f\n", conf_mat$byClass["F1"]))
+cat(sprintf("ROC AUC  : %.3f\n", auc_value))
+```
+
+
+b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
+
+Barak's Logistic Regression Model
+
+The core statistical model is a Bayesian multilevel (hierarchical) logistic regression that links a firm’s binary outcome (“Binary.Rating”) to five continuous predictors—Current Ratio, Long‐term Debt / Capital, Debt–Equity Ratio, EBITDA Margin, and Operating Cash Flow / Share—while simultaneously allowing for industry‐level variation via sector‐specific intercepts. Concretely:
+
+i) Population‐level (fixed) effects: Each financial ratio enters linearly on the logit scale, with a regression coefficient βₖ. These βₖ’s represent the average (across all sectors) log‐odds impact of a one‐unit change in that ratio. Because they are assumed to be drawn from a common Normal(0, σ₍fixed₎) prior, smaller σ₍fixed₎ implies stronger global shrinkage toward zero, reflecting the belief that most ratios have modest effects.
+
+ii) Group‐level (random) effects: There is a random intercept α_j for each sector j. These intercepts capture unobserved baseline differences in outcome probability across industries (e.g., some sectors may be inherently higher‐risk). We assume α_j ∼ Normal(0, σ₍group₎) in the parameterization where σ₍group₎ is the standard deviation of the sector intercepts. In practice, a Student‐t(3, 0, σ₍group₎) prior is placed on the group‐SD, which allows heavier tails (occasional large sector deviations) while still encouraging moderate clustering.
+
+During hyperparameter tuning, each candidate combination of (σ₍fixed₎, σ₍group₎, adapt_delta, iter) defines a complete prior and sampler setting. The Normal(0, σ₍fixed₎) priors on βₖ and Student‐t(3, 0, σ₍group₎) priors on sector‐SD are evaluated (with adapt_delta controlling step‐size fidelity in Hamiltonian Monte Carlo, and iter determining total iterations). For each candidate, the model is fit on training data and compared via LOOIC. LOOIC provides a robust, nearly unbiased estimate of a model’s out‐of‐sample predictive accuracy while automatically penalizing complexity, making it ideal for comparing hyperparameter settings in a Bayesian framework. Thus, there is really only this single hierarchical logistic‐regression model structure; what “changes” between candidates are the hyperpriors’ scales (σ₍fixed₎, σ₍group₎) and sampling controls. 
+
+After identifying the best set of priors and sampler settings, a final model is fitted with those values—using half the iterations for warmup—and then evaluated on held‐out data. Standard classification metrics (accuracy, precision, recall, F1, and ROC AUC) and convergence diagnostics (R-hat, trace plots, posterior predictive checks, and detailed LOO diagnostics) quantify performance and model fit.
+
+
+Lily's Model
+
+The model is a hierarchical (multilevel) ordinal regression—specifically, a cumulative-logit model—that predicts an ordered rating (e.g., “CCC,” “B,” “BB+,” “BB,” “BB–,” “B+,” “B,” “B–,” “CCC,” etc.) for each firm, while allowing intercepts to vary by industry sector. 
+
+Outcome and link function:
+Rather than modeling a binary “yes/no,” the model treats the rating as an ordered category (e.g., “poor,” “fair,” “good,” etc.). It assumes there is an underlying continuous latent score for each observation, and that this latent score is sliced into ordered categories by a set of threshold (cutpoint) values. The probability that a firm’s observed rating falls at or below category k depends on the distance between the latent score and the k-th cutpoint, passed through the logistic function (the “logit” link).
+
+Population-level (fixed) effects:
+Five standardized financial ratios—Debt-Equity Ratio, Current Ratio, EBITDA Margin, Operating Cash Flow per Share, and Long-term Debt / Capital—enter as predictors with a single slope (coefficient) each. These slopes are assumed to represent how, on average across all sectors, a one-unit increase in the predictor shifts the latent score on the logit scale. In brms, if you do not explicitly set a prior, each slope carries a default weakly informative Student-t(3, 0, 2.5) prior. That is, most coefficients are expected to be near zero (no effect), but the t-distribution’s heavier tails allow for occasional larger effects if the data strongly support them.
+
+Group-level (random) effects:
+Every sector j has its own intercept, which means that before accounting for predictors, firms in different industries can start with different baseline positions on the latent scale. These sector-specific intercepts are drawn from a Normal distribution centered at zero, with a standard deviation τ. Because brms uses a default half-Student-t(3, 0, 2.5) prior on τ (the between-sector scale), it assumes most sectors will be clustered near the same baseline but allows for some sectors to deviate more if needed. In other words, if τ is small, sectors are assumed quite similar; if τ is large, there is room for substantial sector-level differences.
+
+Cutpoints (thresholds):
+There are K − 1 cutpoints (e.g., if ratings run 1 to 5, you have four thresholds). Rather than prescribing a prior shape, brms imposes an “ordered” constraint and effectively uses a flat (uniform) prior on these cutpoints subject to their ordering. That means the data alone determine where those thresholds lie on the latent scale.
+
+Because no explicit priors were provided in the code, all of the above defaults apply:
+
+Slopes ∼ Student-t(3, 0, 2.5)
+
+Sector intercept SD (τ) ∼ half-Student-t(3, 0, 2.5)
+
+Cutpoints ∼ uniform over all ordered configurations (implicitly).
+
+In summary, Lily’s model assumes that each firm’s rating arises from a latent continuous score influenced by five financial ratios (common effects) and a sector-specific baseline shift (random intercept). Default weakly informative priors gently shrink slopes toward zero and sector intercepts toward a common mean, yet allow the data to override those beliefs if there is evidence of strong effects or substantial between-sector heterogeneity. Finally, once the model outputs an ordered rating, we apply a BBB– cutoff to convert that prediction into a binary investment-grade/non-investment-grade decision.
+
+*Model 1: Cumulative Ordinal Regression with Random Intercepts and Cloglog Link**
+
+This model, named `fit_cumulative_cloglog_intercepts` in the R code, aims to predict the ordinal credit `Rating` based on several financial predictors.
+
+*   **Dependent Variable**: `Rating`, treated as an ordered categorical variable.
+*   **Likelihood and Link Function**: The model uses a `cumulative` likelihood with a `cloglog` (complementary log-log) link function.
+    *   The cumulative likelihood is appropriate for ordinal responses, modeling the probability of a rating being in a certain category or lower.
+    *   The `cloglog` link is an alternative to the more common `logit` link. It's asymmetric and can be particularly useful when the probability of one extreme (either the lowest or highest category) is more prevalent or of particular interest, or when the rate of change towards one end of the probability scale is different from the other. For example, if lower ratings are rare and the probability of transitioning out of them changes slowly at first, then more rapidly, a cloglog link might be suitable.
+*   **Fixed Effects Structure**: The model includes the following predictors as fixed effects:
+    *   `Current.Ratio`
+    *   `Debt.Equity.Ratio`
+    *   An interaction term: `Current.Ratio * Debt.Equity.Ratio` (which means the model estimates main effects for both, plus their combined effect).
+    *   `Long.term.Debt...Capital`
+    *   `EBITDA.Margin`
+    *   `Operating.Cash.Flow.Per.Share`
+    These predictors are assumed to have a consistent effect on the log-cumulative odds (or cloglog-transformed cumulative probabilities) of the `Rating` across all sectors.
+*   **Random Effects Structure**: `(1 | Sector)`
+    *   This specifies random intercepts for each `Sector`. It assumes that the baseline propensity for a given credit rating (i.e., the cutpoints on the latent scale) varies from sector to sector.
+    *   It does *not* assume that the effects of the predictors (slopes) vary by sector.
+*   **Priors**:
+    *   Fixed Effects (`class = b`): `normal(0, 1.5)` - This is a weakly informative prior, suggesting that the predictor coefficients are centered around 0 with a standard deviation of 1.5 on the cloglog scale. For standardized predictors, this allows for reasonably sized effects.
+    *   Standard Deviation of Random Intercepts (`class = sd` for `Sector`): `student_t(3, 0, 2.5)` - A weakly informative prior for the variability of the intercepts across sectors. The Student's t-distribution with 3 degrees of freedom has heavier tails than a normal distribution, making it robust to outliers.
+    *   Cutpoints/Thresholds (`class = Intercept`): `student_t(3, 0, 2.5)` - Weakly informative priors for the estimated thresholds that define the boundaries between the ordered categories of `Rating` on the latent cloglog scale.
+*   **Assumptions**:
+    *   Proportional odds (or proportional hazards, in the context of cloglog): The effect of each predictor is assumed to be consistent across all cutpoints/thresholds of the ordinal outcome. This is a key assumption of standard cumulative models.
+    *   The random intercepts for `Sector` are normally distributed.
+    *   Observations are conditionally independent given the model parameters.
+*   **Estimation**: The model was fitted using Bayesian methods with `brms`, employing 2000 total iterations per chain, with 1000 iterations as warmup.
+
+Chip's Model
+
+The model applied in this analysis is a Bayesian logistic regression model implemented using the brms package in R. It is designed to predict a binary outcome (binary_rating) based on several financial predictor variables. Specifically, the model estimates the probability that a given company receives a positive credit rating (coded as 1) as a function of five standardized financial ratios: debt-to-equity ratio, current ratio, return on equity, net profit margin, and return on assets. Since the dependent variable is binary, the model assumes a Bernoulli likelihood with a logit link function, making it a generalized linear model for classification tasks.
+
+In terms of structure, the model includes both population-level (fixed) effects and group-level (random) effects. The population-level effects correspond to the global coefficients for each financial predictor, which are assumed to have the same relationship with the outcome across all observations. Additionally, the model accounts for potential variation across industry sectors by including a random intercept for the variable sector, expressed as (1 | sector) in the model formula. This allows each sector to have its own baseline probability of a positive rating, while still sharing information with other sectors through partial pooling. This hierarchical structure helps capture unobserved heterogeneity in sector-specific risk profiles.
+
+The model also incorporates weakly informative priors to regularize the estimates and stabilize convergence. These priors are informed by preliminary data exploration. For example, the coefficient for debt_equity_ratio is given a prior of normal(-0.5, 0.25), reflecting an expectation of a negative association with credit rating, while roe_return_on_equity is assigned a normal(0.4, 0.2) prior to reflect a likely positive influence. The intercept is given a broader normal(0, 2) prior, and the standard deviation of the sector-level random effects is regularized with an exponential(1) prior. Overall, this structure enables the model to balance flexibility with domain-informed constraints, improving its generalizability and interpretability.
+
+
+
+
+<!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+
+## 4. Model checking (3pt)
+
+a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
+
+```{r Barak_Logistic_Bayesian_Regression_Sensitivity_Analysis, echo=TRUE, message=FALSE, warning=FALSE}
+library(brms)
+library(bayesplot)
+library(ggplot2)
+
+# 1. Load best hyperparameters from the most recent CSV
+hyper.out.dir <- file.path(wd, "Hyperparameter_Optimization")
+if (!dir.exists(hyper.out.dir)) {
+  stop(sprintf("Directory '%s' does not exist – check `wd`.", hyper.out.dir))
+}
+csv_files <- list.files(hyper.out.dir, pattern = "^best_params_.*\\.csv$", full.names = TRUE)
+if (length(csv_files) == 0) {
+  stop("No 'best_params_*.csv' file found in ", hyper.out.dir)
+}
+csv_file <- csv_files[order(file.info(csv_files)$mtime, decreasing = TRUE)][1]
+message(sprintf("Reading hyperparameters from: %s", basename(csv_file)))
+best_params_df <- read.csv(csv_file, stringsAsFactors = FALSE)
+
+# 2. Extract hyperparameters (with defaults as fallback)
+get_or <- function(df, name, default) {
+  if (name %in% names(df)) df[[name]][1] else default
+}
+sigma_fixed <- get_or(best_params_df, "sigma_fixed", 2.5)
+sigma_group <- get_or(best_params_df, "sigma_group", 1.5)
+adapt_delta <- get_or(best_params_df, "adapt_delta", 0.95)
+iter        <- get_or(best_params_df, "iter", 1500)
+warmup      <- floor(iter / 2)
+
+# 3. Define original and alternative priors
+orig_priors <- c(
+  prior_string(sprintf("normal(0, %.4f)", sigma_fixed), class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+alt_priors_tight <- c(
+  prior_string("normal(0, 1)", class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+alt_priors_wide <- c(
+  prior_string("normal(0, 5)", class = "b"),
+  prior_string(sprintf("student_t(3, 0, %.4f)", sigma_group), class = "sd")
+)
+
+# 4. Fit prior predictive (sample_prior = "only") under each prior set
+pp_orig <- brm(
+  formula      = Binary.Rating ~ Current.Ratio +
+                                 `Long.term.Debt...Capital` +
+                                 Debt.Equity.Ratio +
+                                 EBITDA.Margin +
+                                 `Operating.Cash.Flow.Per.Share` +
+                                 (1 | Sector),
+  data         = train_binary,
+  family       = bernoulli(link = "logit"),
+  prior        = orig_priors,
+  sample_prior = "only",
+  iter         = iter,
+  warmup       = warmup,
+  control      = list(adapt_delta = adapt_delta),
+  chains       = 4,
+  cores        = 4,
+  refresh      = 0
+)
+pp_tight <- update(pp_orig, prior = alt_priors_tight, sample_prior = "only", refresh = 0)
+pp_wide  <- update(pp_orig, prior = alt_priors_wide,  sample_prior = "only", refresh = 0)
+
+# 5. Extract linear predictor draws, assign names, and plot
+lin_orig_mat  <- as.matrix(posterior_linpred(pp_orig,  transform = FALSE))
+colnames(lin_orig_mat)  <- paste0("obs", seq_len(ncol(lin_orig_mat)))
+lin_tight_mat <- as.matrix(posterior_linpred(pp_tight, transform = FALSE))
+colnames(lin_tight_mat) <- paste0("obs", seq_len(ncol(lin_tight_mat)))
+lin_wide_mat  <- as.matrix(posterior_linpred(pp_wide,  transform = FALSE))
+colnames(lin_wide_mat)  <- paste0("obs", seq_len(ncol(lin_wide_mat)))
+
+mcmc_areas(
+  lin_orig_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Original Priors")
+
+mcmc_areas(
+  lin_tight_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Tighter Priors (Normal(0,1))")
+
+mcmc_areas(
+  lin_wide_mat[, 1:100],
+  prob = 0.5
+) + labs(title = "Wider Priors (Normal(0,5))")
+
+# 6. Re-fit the original model for posterior predictive check
+fit_full <- brm(
+  formula = Binary.Rating ~ Current.Ratio +
+                           `Long.term.Debt...Capital` +
+                           Debt.Equity.Ratio +
+                           EBITDA.Margin +
+                           `Operating.Cash.Flow.Per.Share` +
+                           (1 | Sector),
+  data    = train_binary,
+  family  = bernoulli(link = "logit"),
+  prior   = orig_priors,
+  iter    = iter,
+  warmup  = warmup,
+  control = list(adapt_delta = adapt_delta, max_treedepth = 12),
+  chains  = 4,
+  cores   = 4,
+  refresh = 0
+)
+
+pp_check(fit_full, ndraws = 100) + labs(title = "Posterior Predictive Check – Original Model")
+
+```
+
+
+
+```{r Lilyanish_Ordinal_Model_Sensitivity_Analysis}
+#Prior sensitivity analysis and adjustment of priors 
+#install.packages("priorsense")
+library(priorsense)
+
+sensitivity_l1 <- powerscale_sensitivity(model_l1)
+print(sensitivity_l1)
+#warnings for prior of intercept: potential prior-data conflict
+#setting priors now
+#Gelman et al 2020
+#calculating sds for predictors:
+sd_DER <- sd(train_rating$'Debt.Equity.Ratio', na.rm = TRUE)
+sd_CR <- sd(train_rating$'Current.Ratio', na.rm = TRUE)
+sd_EBITDA<- sd(train_rating$'EBITDA.Margin', na.rm = TRUE)
+sd_OCF <- sd(train_rating$'Operating.Cash.Flow.Per.Share', na.rm = TRUE)
+sd_LTDC <- sd(train_rating$'Long.term.Debt...Capital', na.rm = TRUE)
+
+rating_numeric <-as.numeric(train_rating$Rating)
+
+sd_R <-sd(rating_numeric, na.rm=TRUE)
+
+prior_sd_DER <- 2.5*sd_R/sd_DER
+#0.1631
+prior_sd_CR <-2.5*sd_R/sd_CR
+#6.0350
+prior_sd_EBITDA <- 2.5*sd_R/sd_EBITDA
+#0.2127
+prior_sd_OCF <- 2.5*sd_R/sd_OCF
+#1,4442
+prior_sd_LTDC <- 2.5*sd_R/sd_LTDC
+#32.2953
+
+prios<-c(prior_sd_DER,prior_sd_CR, prior_sd_EBITDA, prior_sd_OCF, prior_sd_LTDC)
+print(prios)
+
+
+adj_priors<- c(
+  prior(normal(0, 0.1631), class = "b", coef = "Debt.Equity.Ratio"),
+  prior(normal(0, 6.0350), class = "b", coef = "Current.Ratio"),
+  prior(normal(0, 0.2127), class = "b", coef = "EBITDA.Margin"),
+  prior(normal(0, 1.4442), class = "b", coef = "Operating.Cash.Flow.Per.Share"),
+  prior(normal(0, 32.2953), class = "b", coef = "Long.term.Debt...Capital"),
+  prior(normal(0,10), class = "Intercept"),
+  prior(exponential(1), class = "sd")
+)
+
+#new model
+model_l2 <- brm(
+  formula = Rating ~ Debt.Equity.Ratio + Current.Ratio + 
+    EBITDA.Margin + Operating.Cash.Flow.Per.Share + Long.term.Debt...Capital +
+    ( 1 | Sector),
+  data = train_rating,
+  family = cumulative("logit"),
+  prior = adj_priors,
+  seed = 123
+)
+summary(model_l2)
+#Again Rhat and ESS are good, no warnings
+#plot(model_l2) #nice and fuzzy
+#pp_check(model_l2)
+#pp_check(model_l2, type="stat_2d")
+#pp_check(model_l2, type = "bars", ndraws = 100)
+sensitivity_l2 <- powerscale_sensitivity(model_l2)
+print(sensitivity_l2) #no problems priors are good
+
+####This part idk where to put
+#get posterior draws
+pred_draws <- posterior_predict(model_l2)
+#convert to binary where bbb-(ordinal index <= 11) and below are 0 (do not invest), above are 1 = invest
+binary_draws <- pred_draws <= 11
+#getting posterior mean probability of getting a binary rating = 1 (invest)
+binary_probability <- colMeans(binary_draws)
+#classifying using a 0.7 treshhold probability
+binary_predict <- ifelse(binary_probability >= 0.7, 1, 0) #we want less false positives (so we don't get invest when we are not quite certain we want to invest)
+actual_binary_rating <- train_rating$Binary.Rating
+
+#confusion matrix: 
+table(Predicted = binary_predict, Actual = actual_binary_rating)
+print(table(Predicted = binary_predict, Actual = actual_binary_rating))
+```
+Lilyana's model:
+After conducting a prior sensitivity analysis on the model without specified priors, there was a warning for a  "potential prior-data conflict for the intercept". This means the prior for the intercept did not align well with the observed data. Priors were afterwards specified using the recommendations by Gelman et al (2020). No warnings
+
+
+
+```{r}
+# Chip's model
+# Predict on test set (e.g., test_binary)
+test_binary <- janitor::clean_names(test_binary)
+preds <- predict(final_model_chip, newdata = test_binary, summary = TRUE)
+
+```
+
+```{r}
+predicted_class <- ifelse(preds[, "Estimate"] >= 0.5, 1, 0)
+true_class <- as.integer(test_binary$binary_rating)
+
+accuracy <- mean(predicted_class == true_class)
+print(paste("Accuracy:", accuracy * 100, "%"))
+
+```
+
+```{r}
+accuracy <- mean(predicted_classes == true_classes)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+
+# Confusion Matrix
+table(Predicted = predicted_class, Actual = true_classes)
+
+```
+
+```{r}
+install.packages("priorsense")
+library(priorsense)
+# 1. Define your original priors (same as before)
+priors_informed <- c(
+  set_prior("normal(-0.5, 0.25)", class = "b", coef = "debt_equity_ratio"),
+  set_prior("normal(0.2, 0.3)", class = "b", coef = "current_ratio"),
+  set_prior("normal(0.4, 0.2)", class = "b", coef = "roe_return_on_equity"),
+  set_prior("normal(0.25, 0.2)", class = "b", coef = "net_profit_margin"),
+  set_prior("normal(0.5, 0.2)", class = "b", coef = "roa_return_on_assets"),
+  set_prior("normal(0, 2)", class = "Intercept")
+)
+
+# 2. Define your model formula
+formula <- bf(binary_rating ~ debt_equity_ratio + current_ratio +
+              roe_return_on_equity + net_profit_margin + 
+              roa_return_on_assets)
+
+# 3. Fit the model *with sample_prior = "yes"*
+model_informed <- brm(
+  formula = formula,
+  data = train_binary,
+  family = bernoulli(),
+  prior = priors_informed,
+  sample_prior = "yes",    # required for powerscale_sensitivity
+  chains = 6,
+  iter = 4000,
+  seed = 123,
+  cores = 6
+)
+
+# 4. Run the prior sensitivity analysis
+ps_result <- powerscale_sensitivity(model_informed)
+
+# 5. Plot sensitivity
+plot(ps_result)
+```
+
+Chip's model: 
+We conducted a prior sensitivity analysis using powerscale_sensitivity() and found that the posterior estimates were primarily driven by the likelihood rather than the prior. The diagnostic plot showed that the influence of the priors was minimal across parameters, with the majority of the posterior variability attributed to the data. This indicates that the model is robust to the chosen priors and that our conclusions are not overly sensitive to prior assumptions.
+
+
+
+<!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
+
+b. Conduct posterior predictive checks for each model to assess how well they fit the data.
+Explain what you conclude.
+
+```{r}
+# Chip's Model #
+# posterior-predictive draws
+yrep <- posterior_predict(final_model_chip, draws = 4000)
+
+# convert outcome to numeric 0/1
+y_obs <- as.numeric(as.character(train_binary$binary_rating))
+
+# quick mean check
+c(Observed = mean(y_obs), Predicted = mean(colMeans(yrep)))
+
+# default bayesplot PPCs
+ppc_bars(y_obs, yrep, prob = 0.9)
+ppc_bars_grouped(y_obs, yrep, group = train_binary$sector, prob = 0.9)
+
+```
+
+
+```{r Barak_Logistic_Regression_Posterior_Predictive_Checks, echo=TRUE, message=FALSE}
+# 1. Load required packages
+library(brms)
+library(bayesplot)
+
+# 2. Run posterior predictive checks for your (polytomous/ordinal) logistic model.
+#    "error_binned" is not available for categorical outcomes, so we use "bars" instead.
+#
+#    If you only have one model object called “fit”:
+
+pp_check(fit, type = "bars")
+pp_check(fit, type = "dens_overlay")
+
+```
+Barak's Logisic Regression Posterior Checks
+
+The binned “bars” posterior‐predictive check shows, for each interval of the predictor, the observed count (light blue bar) alongside the posterior‐predictive median (dark dot) and its credible interval. In every bin, the observed bar falls well within the vertical error bars around the predictive median. This indicates that, across the range of X, the model’s simulated counts align closely with the actual counts—there is no bin where the model systematically under‐ or overestimates the number of observations.
+
+The density‐overlay check plots the empirical density of the observed outcome curve (dark line) against many simulated densities (light lines). Here, the cloud of replicated curves closely envelops the observed curve throughout the X range. In particular, at both the trough around X≈5 and the peak near X≈15, the simulated densities cover the data‐derived curve, showing no systematic bias in shape or amplitude.
+
+Taken together, these two diagnostics suggest that the model is adequately capturing both the overall distribution of counts and the detailed shape of the response across X. There are no clear systematic deviations between “y_rep” and “y.” Therefore, we conclude that the model fits the data well and does not exhibit obvious misfit.
+
+
+<!-- EXPLAIN CONCLUSIONS -->
+
+## 5. Model Comparison (1.5pt)
+
+a. Use k-fold cross-validation to compare the models.
+
+```{r cross_validation_comparison}
+# cross_validation_benchmark.R
+# -------------------------------------------------------------------
+# Compares three Bayesian models (Barak, Chip, Lilyana) with 5-fold
+# cross-validation on investment-grade vs. non-investment-grade labels.
+# Outputs per-fold and averaged Accuracy, Precision, Recall, and F1.
+# -------------------------------------------------------------------
+
+# -----------------NO NEED TO RUN, RESULTS ARE SAVED-------------------
+
+# 0. PACKAGES ---------------------------------------------------------
+required_pkgs <- c("brms", "dplyr", "janitor", "pROC", "caret", "purrr", "tibble", "tidyr")
+new_pkgs <- required_pkgs[!(required_pkgs %in% installed.packages()[,"Package"])]
+if(length(new_pkgs)) install.packages(new_pkgs, repos = "https://cran.rstudio.com/")
+
+invisible(lapply(required_pkgs, library, character.only = TRUE))
+
+# 1. DATA PREP --------------------------------------------------------
+# Expect `df_rating` in the working environment; otherwise attempt CSV.
+if(!exists("df_rating")){
+  df_rating <- read.csv("Input_Data/df_rating.csv", stringsAsFactors = FALSE)
+}
+
+# Binary label: 1 = Investment‑grade, 0 = Speculative
+ig_levels <- c("AAA","AA+","AA","AA-","A+","A","A-","BBB+","BBB","BBB-")
+
+df_rating <- df_rating %>%
+  mutate(Binary.Rating = ifelse(Rating %in% ig_levels, 1, 0))
+
+# Clean predictor names → df_binary (logistic models) -----------------
+
+df_binary <- df_rating %>% select(-Rating) %>% janitor::clean_names()
+
+df_binary$binary_rating <- factor(df_binary$binary_rating)
+
+# Ordered factor for ordinal model → df_rating -----------------------
+canon_levels <- c("AAA","AA+","AA","AA-","A+","A","A-","BBB+","BBB","BBB-",
+                 "BB+","BB","BB-","B+","B","B-","CCC","CC","C","D")
+all_levels   <- union(canon_levels, sort(unique(df_rating$Rating)))
+
+df_rating$Rating <- factor(df_rating$Rating, levels = all_levels, ordered = TRUE)
+
+# QUICK COUNT (optional) ---------------------------------------------
+cat("df_binary   :", nrow(df_binary), "rows ×", ncol(df_binary), "cols\n")
+cat("df_rating   :", nrow(df_rating), "rows ×", ncol(df_rating), "cols\n\n")
+
+# 2. HELPER FUNCTIONS -------------------------------------------------
+metric_vec <- function(pred, truth){
+  # Convert to factors with levels c(0,1)
+  truth_f <- factor(truth, levels = c(0,1))
+  pred_f  <- factor(pred,  levels = c(0,1))
+  # Compute accuracy always
+  accuracy <- mean(truth_f == pred_f, na.rm = TRUE)
+  # If both classes present in truth, compute confusionMatrix-derived stats; else set NA
+  if(length(unique(truth_f)) == 2){
+    cm        <- caret::confusionMatrix(pred_f, truth_f, positive = "1")
+    precision <- as.numeric(cm$byClass["Precision"])
+    recall    <- as.numeric(cm$byClass["Recall"])
+    f1        <- as.numeric(cm$byClass["F1"])
+  } else {
+    precision <- NA_real_
+    recall    <- NA_real_
+    f1        <- NA_real_
+  }
+  c(Accuracy = accuracy, Precision = precision, Recall = recall, F1 = f1)
+}
+
+safe_metrics <- function(expr){
+  tryCatch(expr, error = function(e){
+    message("  ✖ Model failed: ", e$message)
+    c(Accuracy = NA_real_, Precision = NA_real_, Recall = NA_real_, F1 = NA_real_)
+  })
+}
+
+# 3. SPLITS (STRATIFIED, GUARANTEE BOTH CLASSES) ----------------------
+# Count positives/negatives
+n_pos <- sum(df_binary$binary_rating == 1)
+n_neg <- sum(df_binary$binary_rating == 0)
+# Choose k so each fold can contain at least one of each class (minimum 3 folds)
+max_k <- min(3, n_pos, n_neg)
+if(max_k < 2){
+  stop(sprintf("Not enough examples of each class for cross-validation (n_pos=%d, n_neg=%d)", n_pos, n_neg))
+}
+set.seed(123)
+folds <- caret::createFolds(df_binary$binary_rating, k = max_k, list = TRUE)
+
+# 4. PRIORS -----------------------------------------------------------
+priors_barak <- c(
+  prior(normal(0,2.5), class="b"),
+  prior(student_t(3,0,2.5), class="sd"),
+  prior(normal(0,5), class="Intercept")
+)
+
+build_priors_chip <- function(cols){
+  p <- c(prior(normal(0,2), class="Intercept"))
+  if("debt_equity_ratio" %in% cols)    p <- c(p, set_prior("normal(-0.5,0.25)", class="b", coef="debt_equity_ratio"))
+  if("current_ratio" %in% cols)        p <- c(p, set_prior("normal(0.2,0.3)",  class="b", coef="current_ratio"))
+  if("roe_return_on_equity" %in% cols) p <- c(p, set_prior("normal(0.4,0.2)",  class="b", coef="roe_return_on_equity"))
+  if("net_profit_margin" %in% cols)    p <- c(p, set_prior("normal(0.25,0.2)", class="b", coef="net_profit_margin"))
+  if("roa_return_on_assets" %in% cols) p <- c(p, set_prior("normal(0.5,0.2)",  class="b", coef="roa_return_on_assets"))
+  p
+}
+
+# 5. MAIN LOOP --------------------------------------------------------
+all_results <- vector("list", length(folds))
+
+for(k in seq_along(folds)){
+  cat(sprintf("\n----- FOLD %d --------------------------------------------------\n", k))
+  test_idx  <- folds[[k]]
+  train_idx <- setdiff(seq_len(nrow(df_binary)), test_idx)
+
+  train_binary <- df_binary[train_idx, ]
+  test_binary  <- df_binary[test_idx,  ]
+
+  train_rating <- df_rating[train_idx, ]
+  test_rating  <- df_rating[test_idx,  ]
+
+  truth <- as.numeric(as.character(test_binary$binary_rating))
+
+  # -- BARAK LOGISTIC -------------------------------------------------
+  metrics_barak <- safe_metrics({
+    fit <- brm(binary_rating ~ current_ratio + long_term_debt_capital + debt_equity_ratio +
+                       ebitda_margin + operating_cash_flow_per_share + (1|sector),
+                data=train_binary, family=bernoulli(), prior=priors_barak,
+                iter=1500, warmup=750, control=list(adapt_delta=0.95), cores=4, refresh=0)
+    prob <- posterior_epred(fit, newdata=test_binary, re_formula=NA) %>% colMeans()
+    pred <- ifelse(prob>0.5,1,0)
+    metric_vec(pred, truth)
+  })
+
+  # -- CHIP LOGISTIC --------------------------------------------------
+  chip_cols <- intersect(c("debt_equity_ratio","current_ratio","roe_return_on_equity",
+                           "net_profit_margin","roa_return_on_assets"), colnames(train_binary))
+  metrics_chip <- if(length(chip_cols) >= 2) safe_metrics({
+    formula_chip <- as.formula(paste("binary_rating ~", paste(chip_cols, collapse=" + "), "+ (1|sector)"))
+    fit <- brm(formula_chip, data=train_binary, family=bernoulli(),
+               prior=build_priors_chip(chip_cols), iter=2000, warmup=1000,
+               cores=4, refresh=0)
+    prob <- posterior_epred(fit, newdata=test_binary, re_formula=NA) %>% colMeans()
+    pred <- ifelse(prob>0.5,1,0)
+    metric_vec(pred, truth)
+  }) else {
+    message("  ✖ Skipping Chip model (<2 predictors available)")
+    c(Accuracy=NA, Precision=NA, Recall=NA, F1=NA)
+  }
+
+  # -- LILYANA ORDINAL -----------------------------------------------
+  metrics_lily <- safe_metrics({
+    # Re‑factor like Lilyana’s workflow
+    train_rating$Rating <- factor(as.character(train_rating$Rating), ordered=TRUE)
+    test_rating$Rating  <- factor(as.character(test_rating$Rating), levels=levels(train_rating$Rating), ordered=TRUE)
+
+    fit <- brm(Rating ~ Debt.Equity.Ratio + Current.Ratio + EBITDA.Margin +
+                        Operating.Cash.Flow.Per.Share + Long.term.Debt...Capital + (1|Sector),
+               data = train_rating %>% tidyr::drop_na(Rating),
+               family = cumulative("logit"), iter=2000, warmup=1000,
+               cores=4, refresh=0)
+
+    pred_samples <- posterior_predict(fit, newdata=test_rating %>% tidyr::drop_na(Rating))
+    pred_mode    <- apply(pred_samples, 2, function(x){ ux<-unique(x); ux[which.max(tabulate(match(x,ux)))] })
+    pred_ratings <- levels(train_rating$Rating)[pred_mode]
+
+    pred_vec <- rep(0, nrow(test_rating))
+    pred_vec[!is.na(test_rating$Rating)] <- ifelse(pred_ratings %in% ig_levels, 1, 0)
+
+    metric_vec(pred_vec, truth)
+  })
+
+  # Assemble results for this fold -----------------------------------
+  all_results[[k]] <- tibble(
+    Fold      = k,
+    Model     = c("Barak","Chip","Lilyana"),
+    Accuracy  = c(metrics_barak["Accuracy"],  metrics_chip["Accuracy"],  metrics_lily["Accuracy"]),
+    Precision = c(metrics_barak["Precision"], metrics_chip["Precision"], metrics_lily["Precision"]),
+    Recall    = c(metrics_barak["Recall"],    metrics_chip["Recall"],    metrics_lily["Recall"]),
+    F1        = c(metrics_barak["F1"],        metrics_chip["F1"],        metrics_lily["F1"])
+  )
+}
+
+# 6. SUMMARY ----------------------------------------------------------
+cv_results <- dplyr::bind_rows(purrr::compact(all_results))
+
+if(nrow(cv_results)==0){
+  stop("All folds failed – check model errors above.")
+}
+
+summary_table <- cv_results %>%
+  group_by(Model) %>%
+  summarise(across(c(Accuracy, Precision, Recall, F1), mean, na.rm=TRUE), .groups="drop")
+
+print(cv_results)
+cat("\n================= AVERAGED (3‑fold) =================\n")
+print(summary_table)
+
+# 7. OUTPUT: Write summary to CSV (ensure directory exists) -----------------
+output_dir <- file.path(getwd(), "Output_Data")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+write.csv(summary_table, file.path(output_dir, "cv_metrics_summary.csv"), row.names = FALSE)
+```
+
+b. Determine the best model based on predictive accuracy and justify your decision.
+
+<!-- DECISION -->
+
+```{r final_comparison}
+summary_file <- file.path(output_dir, "cv_metrics_summary.csv")
+
+# Check if file exists before reading
+if (file.exists(summary_file)) {
+  summary_table_read <- read.csv(summary_file)
+  print(summary_table_read)
+} else {
+  message("Summary file does not exist at the expected location: ", summary_file)
+}
+
+```
+
+The best model is Barak’s model, a Bayesian multilevel logistic regression with a random intercept for Sector whic was tuned via rBayesianOptimization over hyperparameters including prior scales and sampling controls. This model achieved the strongest performance across the following key metrics: Accuracy (0.678), Precision (0.662), and  F1 Score (0.763). These results indicate a well-calibrated balance between identifying true positives and minimizing false positives—likely aided by the hierarchical structure that accounts for sector-level variance.
+
+Chip’s model, also a Bayesian logistic regression, used an alternative set of financial ratios and carefully designed informative priors. It performed well in terms of Recall (0.945) but had lower Precision (0.585) and Accuracy (0.583), implying a greater tendency to misclassify speculative-grade firms as investment-grade.
+
+Lilyana’s model, a Bayesian ordinal cumulative regression using a cloglog link, predicted full rating categories before converting them into binary classes using a BBB- threshold. This model achieved perfect Recall (1.000) but the lowest Precision (0.575) and Accuracy (0.575), reflecting a heavy bias toward classifying firms as investment-grade, regardless of true status.
+
+While Lilyana’s ordinal model is ideal for minimizing false negatives, and Chip’s logistic model emphasizes prior-informed structure, Barak’s Bayesian multilevel logistic regression provides the  best and most balanced classification performance overall.
+
+## 6. Interpretation of Important Parameters (1.5pt)
+Choose one of the best models and interpret its most important parameters.
+
+Barak's Logistic Regression
+
+Regression Coefficients:
+                              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept                         1.82      0.31     1.20     2.41 1.00     1797     1775
+Current.Ratio                    -0.33      0.07    -0.46    -0.19 1.00     2623     2038
+Long.term.Debt...Capital         -2.27      0.39    -3.05    -1.54 1.00     2913     2154
+Debt.Equity.Ratio                 0.00      0.00    -0.00     0.00 1.00     3426     1880
+EBITDA.Margin                     0.01      0.00     0.01     0.02 1.00     4722     2328
+Operating.Cash.Flow.Per.Share     0.04      0.02     0.00     0.08 1.00     2962     2023
+
+
+For each fixed‐effect parameter, we report the posterior mean (“Estimate”), its 95% credible interval, and then describe what it implies about the probability of a firm receiving a “Binary.Rating” (1 = “investment-grade”, 0 = “non-investment grade”), holding all other predictors constant.
+
+Intercept (1.82; 95% CI 1.20 to 2.41)
+• The intercept represents the log‐odds of a firm being “good” when all continuous predictors (Current Ratio, Long-term Debt/Capital, Debt/Equity, EBITDA Margin, and Operating Cash Flow per Share) are exactly zero, and for an “average” Sector (i.e., random intercept = 0).
+• A posterior mean of 1.82 translates to an odds of exp(1.82) ≈ 6.17, or a probability of 6.17/(1 + 6.17) ≈ 0.86. In practice, because most predictors are never exactly zero, the intercept is mainly a baseline reference—but it does indicate that, at “zero” predictor values, the model strongly favors a “good” rating.
+• Since the entire 95% interval (1.20 to 2.41) sits well above zero, we can be confident that—even without any other information—there is a high baseline chance (≈0.77 to 0.92) of a positive rating.
+
+Current Ratio (–0.33; 95% CI –0.46 to –0.19)
+• Current Ratio measures short‐term liquidity (current assets ÷ current liabilities). A negative coefficient (–0.33) indicates that, all else equal, higher liquidity is actually associated with lower odds of a “good” rating in this sample.
+• On the log‐odds scale, a one‐unit increase in Current Ratio reduces the log‐odds of a “good” rating by 0.33. Converting to odds, exp(–0.33) ≈ 0.72, meaning roughly a 28% lower odds of a “good” rating per one‐point increase.
+• Because the 95% CI (–0.46 to –0.19) does not include zero, we are highly confident this negative relationship is real: more liquid firms appear less likely (in this data) to earn a “good” Binary.Rating. This could reflect that extremely liquid firms may be under‐investing or holding excess cash at the expense of growth.
+
+Long-term Debt / Capital (–2.27; 95% CI –3.05 to –1.54)
+• This ratio captures leverage: the fraction of a firm’s capital structure financed by long‐term debt. A large negative coefficient (–2.27) means that higher long‐term leverage strongly decreases the log‐odds of a “good” rating.
+• In odds terms, exp(–2.27) ≈ 0.10—so each one‐unit increase in this ratio is associated with about a 90% drop in the odds of a positive rating. Because the ratio typically lies between 0 and 1 (e.g., 0.2 → 0.8), even a 0.1‐point rise in Long-term Debt/Capital reduces the odds by exp(–0.227) ≈ 0.80 (a 20% drop).
+• The entire 95% CI (–3.05 to –1.54) is far below zero, confirming that high long‐term leverage is a robust predictor of a poor rating. In other words, as a firm takes on more long‐term debt relative to total capital, its probability of being “good” declines steeply.
+
+Debt / Equity Ratio (0.00; 95% CI –0.00 to 0.00)
+• Despite being conceptually similar to long‐term leverage, this coefficient is estimated near zero (posterior mean ~ 0.000) with a 95% interval tightly surrounding zero.
+• That implies Debt/Equity does not have a meaningful independent effect on the probability of a “good” rating, once Current Ratio, Long-term Debt/Capital, EBITDA Margin, and Cash Flow per Share are already in the model.
+• Practically speaking, the data show no discernible association (positive or negative) between Debt/Equity and Rating, controlling for the other financial ratios. Multicollinearity or redundancy with Long-term Debt/Capital may explain why this term is effectively null.
+
+EBITDA Margin (0.01; 95% CI 0.01 to 0.02)
+• EBITDA Margin (EBITDA⁄Revenue) captures operating profitability. A positive coefficient of 0.01 means that each percentage‐point increase in margin raises the log‐odds of a “good” rating by 0.01—that is, exp(0.01) ≈ 1.01, or about a 1% increase in odds per 1% margin.
+• While 0.01 seems small on the log‐odds scale, firms often vary in EBITDA margin by tens of percentage points. For example, a 10‐point rise (say, from 5% to 15%) would increase log‐odds by 0.10 (odds × 1.11), a nontrivial bump in probability.
+• Because the entire 95% CI (0.01 to 0.02) excludes zero, we are confident that higher operating profitability in EBITDA margin translates into higher odds of a positive rating.
+
+Operating Cash Flow/Per Share (0.04; 95% CI 0.00 to 0.08)
+• This ratio measures free cash flow available to equity holders on a per‐share basis. A mean coefficient of 0.04 indicates that each additional dollar of per‐share operating cash flow increases log-odds of a “good” rating by 0.04—i.e., exp(0.04) ≈ 1.04, or a 4% rise in odds per $1/share.
+• The 95% CI runs from 0.00 to 0.08, just barely excluding zero at the lower bound. That suggests a modest but “statistically credible” positive effect: firms generating more cash per share are somewhat more likely to be rated “good.”
+• Because the credible interval barely touches zero, we interpret this effect with caution: it is weaker than EBITDA Margin but still suggests that higher cash‐generation capability supports higher ratings.
+
+Overall Conclusion
+Among these predictors, Long-term Debt/Capital (–2.27) and Current Ratio (–0.33) are most influential: both leverage measures strongly predict a worse rating (especially long‐term debt), while Current Ratio’s negative sign hints that overly high short‐term liquidity might signal under‐utilized capital. EBITDA Margin (0.01) consistently raises rating probability, and Operating Cash Flow/Share (0.04) provides a modest boost. Debt/Equity shows no independent effect once other ratios are accounted for. In sum, controlling for Sector, firms with low long‐term leverage and moderate liquidity, coupled with healthier profitability and cash flow, are far more likely to be classified as “good.”
+ 
+# Statement of technology
+We utilized Generative AI (GenAI) tools to assist with debugging and resolving coding issues throughout the project. In addition, GitHub was employed for version control and collaboration, enabling efficient tracking of changes and ensuring consistency across different stages of development.
+<!-- Complete if necessary -->
+
