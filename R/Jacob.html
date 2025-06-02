@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+
+
+
+<title>Jacob.knit</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+<script>/*! jQuery v3.6.0 | (c) OpenJS Foundation and other contributors | jquery.org/license */
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+</style>
+<script>/*!
+ * Bootstrap v3.3.5 (http://getbootstrap.com)
+ * Copyright 2011-2015 Twitter, Inc.
+ * Licensed under the MIT license
+ */
+<script>/**
+* @preserve HTML5 Shiv 3.7.2 | @afarkas @jdalton @jon_neal @rem | MIT/GPL2 Licensed
+*/
+// Only run this code in IE 8
+if (!!window.navigator.userAgent.match("MSIE 8")) {
+};
+</script>
+<script>/*! Respond.js v1.4.2: min/max-width media query polyfill * Copyright 2013 Scott Jehl
+ * Licensed under https://github.com/scottjehl/Respond/blob/master/LICENSE-MIT
+ *  */
+
+// Only run this code in IE 8
+if (!!window.navigator.userAgent.match("MSIE 8")) {
+};
+</script>
+<style>h1 {font-size: 34px;}
+h1.title {font-size: 38px;}
+h2 {font-size: 30px;}
+h3 {font-size: 24px;}
+h4 {font-size: 18px;}
+h5 {font-size: 16px;}
+h6 {font-size: 12px;}
+code {color: inherit; background-color: rgba(0, 0, 0, 0.04);}
+pre:not([class]) { background-color: white }</style>
+<script>
+
+/**
+ * jQuery Plugin: Sticky Tabs
+ *
+ * @author Aidan Lister <aidan@php.net>
+ * adapted by Ruben Arslan to activate parent tabs too
+ * http://www.aidanlister.com/2014/03/persisting-the-tab-state-in-bootstrap/
+ */
+(function($) {
+  "use strict";
+  $.fn.rmarkdownStickyTabs = function() {
+    var context = this;
+    // Show the tab corresponding with the hash in the URL, or the first tab
+    var showStuffFromHash = function() {
+      var hash = window.location.hash;
+      var selector = hash ? 'a[href="' + hash + '"]' : 'li.active > a';
+      var $selector = $(selector, context);
+      if($selector.data('toggle') === "tab") {
+        $selector.tab('show');
+        // walk up the ancestors of this element, show any hidden tabs
+        $selector.parents('.section.tabset').each(function(i, elm) {
+          var link = $('a[href="#' + $(elm).attr('id') + '"]');
+          if(link.data('toggle') === "tab") {
+            link.tab("show");
+          }
+        });
+      }
+    };
+
+
+    // Set the correct tab when the page loads
+    showStuffFromHash(context);
+
+    // Set the correct tab when a user uses their back/forward button
+    $(window).on('hashchange', function() {
+      showStuffFromHash(context);
+    });
+
+    // Change the URL when tabs are clicked
+    $('a', context).on('click', function(e) {
+      history.pushState(null, null, this.href);
+      showStuffFromHash(context);
+    });
+
+    return this;
+  };
+}(jQuery));
+
+window.buildTabsets = function(tocID) {
+
+  // build a tabset from a section div with the .tabset class
+  function buildTabset(tabset) {
+
+    // check for fade and pills options
+    var fade = tabset.hasClass("tabset-fade");
+    var pills = tabset.hasClass("tabset-pills");
+    var navClass = pills ? "nav-pills" : "nav-tabs";
+
+    // determine the heading level of the tabset and tabs
+    var match = tabset.attr('class').match(/level(\d) /);
+    if (match === null)
+      return;
+    var tabsetLevel = Number(match[1]);
+    var tabLevel = tabsetLevel + 1;
+
+    // find all subheadings immediately below
+    var tabs = tabset.find("div.section.level" + tabLevel);
+    if (!tabs.length)
+      return;
+
+    // create tablist and tab-content elements
+    var tabList = $('<ul class="nav ' + navClass + '" role="tablist"></ul>');
+    $(tabs[0]).before(tabList);
+    var tabContent = $('<div class="tab-content"></div>');
+    $(tabs[0]).before(tabContent);
+
+    // build the tabset
+    var activeTab = 0;
+    tabs.each(function(i) {
+
+      // get the tab div
+      var tab = $(tabs[i]);
+
+      // get the id then sanitize it for use with bootstrap tabs
+      var id = tab.attr('id');
+
+      // see if this is marked as the active tab
+      if (tab.hasClass('active'))
+        activeTab = i;
+
+      // remove any table of contents entries associated with
+      // this ID (since we'll be removing the heading element)
+      $("div#" + tocID + " li a[href='#" + id + "']").parent().remove();
+
+      // sanitize the id for use with bootstrap tabs
+      id = id.replace(/[.\/?&!#<>]/g, '').replace(/\s/g, '_');
+      tab.attr('id', id);
+
+      // get the heading element within it, grab it's text, then remove it
+      var heading = tab.find('h' + tabLevel + ':first');
+      var headingText = heading.html();
+      heading.remove();
+
+      // build and append the tab list item
+      var a = $('<a role="tab" data-toggle="tab">' + headingText + '</a>');
+      a.attr('href', '#' + id);
+      a.attr('aria-controls', id);
+      var li = $('<li role="presentation"></li>');
+      li.append(a);
+      tabList.append(li);
+
+      // set it's attributes
+      tab.attr('role', 'tabpanel');
+      tab.addClass('tab-pane');
+      tab.addClass('tabbed-pane');
+      if (fade)
+        tab.addClass('fade');
+
+      // move it into the tab content div
+      tab.detach().appendTo(tabContent);
+    });
+
+    // set active tab
+    $(tabList.children('li')[activeTab]).addClass('active');
+    var active = $(tabContent.children('div.section')[activeTab]);
+    active.addClass('active');
+    if (fade)
+      active.addClass('in');
+
+    if (tabset.hasClass("tabset-sticky"))
+      tabset.rmarkdownStickyTabs();
+  }
+
+  // convert section divs with the .tabset class to tabsets
+  var tabsets = $("div.section.tabset");
+  tabsets.each(function(i) {
+    buildTabset($(tabsets[i]));
+  });
+};
+
+</script>
+<style type="text/css">.hljs-literal {
+color: #990073;
+}
+.hljs-number {
+color: #099;
+}
+.hljs-comment {
+color: #998;
+font-style: italic;
+}
+.hljs-keyword {
+color: #900;
+font-weight: bold;
+}
+.hljs-string {
+color: #d14;
+}
+</style>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+<style type="text/css">code{white-space: pre;}</style>
+<script type="text/javascript">
+if (window.hljs) {
+  hljs.configure({languages: []});
+  hljs.initHighlightingOnLoad();
+  if (document.readyState && document.readyState === "complete") {
+    window.setTimeout(function() { hljs.initHighlighting(); }, 0);
+  }
+}
+</script>
+
+
+
+
+
+
+
+
+
+<style type="text/css">
+.main-container {
+max-width: 940px;
+margin-left: auto;
+margin-right: auto;
+}
+img {
+max-width:100%;
+}
+.tabbed-pane {
+padding-top: 12px;
+}
+.html-widget {
+margin-bottom: 20px;
+}
+button.code-folding-btn:focus {
+outline: none;
+}
+summary {
+display: list-item;
+}
+details > summary > p:only-child {
+display: inline;
+}
+pre code {
+padding: 0;
+}
+</style>
+
+
+
+<!-- tabsets -->
+
+<style type="text/css">
+.tabset-dropdown > .nav-tabs {
+display: inline-table;
+max-height: 500px;
+min-height: 44px;
+overflow-y: auto;
+border: 1px solid #ddd;
+border-radius: 4px;
+}
+.tabset-dropdown > .nav-tabs > li.active:before, .tabset-dropdown > .nav-tabs.nav-tabs-open:before {
+content: "\e259";
+font-family: 'Glyphicons Halflings';
+display: inline-block;
+padding: 10px;
+border-right: 1px solid #ddd;
+}
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li.active:before {
+content: "\e258";
+font-family: 'Glyphicons Halflings';
+border: none;
+}
+.tabset-dropdown > .nav-tabs > li.active {
+display: block;
+}
+.tabset-dropdown > .nav-tabs > li > a,
+.tabset-dropdown > .nav-tabs > li > a:focus,
+.tabset-dropdown > .nav-tabs > li > a:hover {
+border: none;
+display: inline-block;
+border-radius: 4px;
+background-color: transparent;
+}
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li {
+display: block;
+float: none;
+}
+.tabset-dropdown > .nav-tabs > li {
+display: none;
+}
+</style>
+
+<!-- code folding -->
+
+
+
+
+</head>
+
+<body>
+
+
+<div class="container-fluid main-container">
+
+
+
+
+<div id="header">
+
+
+
+
+</div>
+
+
+<table>
+<tbody>
+<tr class="odd">
+<td>title: "Group project"</td>
+</tr>
+<tr class="even">
+<td>subtitle: "Group Number?"</td>
+</tr>
+<tr class="odd">
+<td>author:</td>
+</tr>
+<tr class="even">
+<td>- "FirstName LastName"</td>
+</tr>
+<tr class="odd">
+<td>- "FirstName LastName"</td>
+</tr>
+<tr class="even">
+<td>- "FirstName LastName"</td>
+</tr>
+<tr class="odd">
+<td>- "FirstName LastName"</td>
+</tr>
+<tr class="even">
+<td>- "FirstName LastName"</td>
+</tr>
+<tr class="odd">
+<td>date: "2025-06-02"</td>
+</tr>
+<tr class="even">
+<td>output:</td>
+</tr>
+<tr class="odd">
+<td>html_document:</td>
+</tr>
+<tr class="even">
+<td>theme: readable</td>
+</tr>
+<tr class="odd">
+<td>toc: true</td>
+</tr>
+<tr class="even">
+<td>toc_depth: 4</td>
+</tr>
+<tr class="odd">
+<td>toc_float: true</td>
+</tr>
+<tr class="even">
+<td>code_download: false</td>
+</tr>
+</tbody>
+</table>
+<div id="checklist" class="section level1 unnumbered">
+<h1 class="unnumbered">Checklist</h1>
+<p>The submission includes the following.</p>
+<ul class="task-list">
+<li><label><input type="checkbox"></input>RMD document where it's clear what
+is the code that corresponds to each question.</label></li>
+<li><label><input type="checkbox"></input>Dataset</label></li>
+<li><label><input type="checkbox"></input>html/PDF document with the
+following</label>
+<ul class="task-list">
+<li><label><input type="checkbox"></input>Numbered questions and answers with
+text and all the necessary code.</label></li>
+<li><label><input type="checkbox"></input>Subtitle indicates the group
+number</label></li>
+<li><label><input type="checkbox"></input>Name of all group
+members</label></li>
+<li><label><input type="checkbox"></input>Details of specification of the work
+done by group members (e.g., who found the data, who did the
+pre-processing, who answered which questions, etc).</label></li>
+<li><label><input type="checkbox"></input>Statement of technology. Did you use
+any AI tools? How?</label></li>
+</ul></li>
+</ul>
+</div>
+<div id="group-project" class="section level1 unnumbered">
+<h1 class="unnumbered">Group project</h1>
+<p>For the project, we use the following packages:</p>
+<pre class="r"><code>## ...</code></pre>
+<div id="dataset-selection-0.5pt" class="section level2">
+<h2>1. Dataset Selection (0.5pt)</h2>
+<p>Select a dataset with clusters such as schools, regions, or people
+with multiple observations per individual. (From for example, <a href="https://www.kaggle.com/" class="uri">https://www.kaggle.com/</a>)
+It would be a good idea to choose a smallish dataset (not too many rows,
+e.g., less than 1000) or subset it so that fitting the models doesn't
+take too long.</p>
+<ol style="list-style-type: lower-alpha">
+<li>Describe the dataset with a couple of short sentences. What was its
+intended use? Are there papers that reference it? Provide information on
+how to obtain the dataset, including its source and any necessary
+preprocessing steps/feature engineering.</li>
+</ol>
+<!-- DESCRIBE IT BELOW -->
+<pre class="r"><code># 0) Install &amp; load httr for HTTP requests
+if (!requireNamespace(&quot;httr&quot;, quietly = TRUE)) {
+  install.packages(&quot;httr&quot;, repos = &quot;https://cran.rstudio.com/&quot;)
+}
+library(httr)
+
+# 1) Kaggle credentials
+user &lt;- &quot;barakazor&quot;
+key &lt;- &quot;6bfceda688e1452d09191636ad94eeeb&quot;
+
+# 2) Define working and data directories
+wd &lt;- getwd()
+data_dir &lt;- file.path(wd, &quot;data&quot;)
+input_dir &lt;- file.path(wd, &quot;Input_Data&quot;)
+if (!dir.exists(data_dir)) dir.create(data_dir, recursive = TRUE)
+if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
+
+# 3) Download the ZIP via Kaggle REST API
+dataset_slug &lt;- &quot;kirtandelwadia/corporate-credit-rating-with-financial-ratios&quot;
+zip_path &lt;- file.path(data_dir, &quot;credit_rating.zip&quot;)
+download_url &lt;- paste0(&quot;https://www.kaggle.com/api/v1/datasets/download/&quot;, dataset_slug)
+
+resp &lt;- GET(
+  url = download_url,
+  authenticate(user, key),
+  write_disk(zip_path, overwrite = TRUE),
+  config(followlocation = TRUE)
+)
+stop_for_status(resp)
+
+# 4) Unzip into data_dir
+unzipped &lt;- unzip(zip_path, exdir = data_dir)
+csvs &lt;- unzipped[grepl(&quot;\\.csv$&quot;, unzipped)]
+if (length(csvs) == 0) stop(&quot;No CSV found in the downloaded ZIP.&quot;)
+
+# 5) Read the first CSV into R
+df_raw &lt;- read.csv(csvs[1], stringsAsFactors = FALSE)
+
+# 6) Save to Input_Data/
+write.csv(
+  df_raw,
+  file      = file.path(input_dir, &quot;df_raw.csv&quot;),
+  row.names = FALSE
+)
+saveRDS(
+  df_raw,
+  file = file.path(input_dir, &quot;df_raw.rds&quot;)
+)</code></pre>
+<pre class="r"><code># Load necessary packages (install if needed)
+library(readr)
+library(dplyr)
+library(janitor)
+library(lubridate)
+
+# Read raw data and clean column names explicitly
+input_dir &lt;- file.path(wd, &quot;Input_Data&quot;) # adjust as needed
+df_raw &lt;- read_csv(file.path(input_dir, &quot;df_raw.csv&quot;))
+
+# Use janitor::clean_names to ensure availability
+df_raw &lt;- janitor::clean_names(df_raw)
+
+# Define ordered rating levels
+rating_levels &lt;- c(
+  &quot;AAA&quot;, &quot;AA+&quot;, &quot;AA&quot;, &quot;AA-&quot;, &quot;A+&quot;, &quot;A&quot;, &quot;A-&quot;,
+  &quot;BBB+&quot;, &quot;BBB&quot;, &quot;BBB-&quot;, &quot;BB+&quot;, &quot;BB&quot;, &quot;BB-&quot;,
+  &quot;B+&quot;, &quot;B&quot;, &quot;B-&quot;, &quot;CCC&quot;, &quot;CC&quot;, &quot;C&quot;, &quot;D&quot;
+)
+
+# Create df with fiscal_year and scaled predictors
+df &lt;- df_raw %&gt;%
+  mutate(
+    rating_ord  = factor(rating, levels = rating_levels, ordered = TRUE),
+    sector      = forcats::fct_lump_n(sector, 10),
+    corporation = as.factor(corporation),
+    fiscal_year = lubridate::year(lubridate::ymd(rating_date))
+  ) %&gt;%
+  mutate(across(
+    c(
+      current_ratio, debt_equity_ratio, gross_margin,
+      operating_margin, net_profit_margin, roa_return_on_assets
+    ),
+    ~ as.numeric(scale(.x)),
+    .names = &quot;z_{col}&quot;
+  )) %&gt;%
+  tidyr::drop_na(rating_ord, sector, corporation)
+
+
+
+# 1. Filter for rating date in 2016 and select only the needed variables
+#    - binary_rating: Binary.Rating as DV
+#    - rating      : Rating as DV
+#    - current_ratio, long_term_debt_capital, debt_equity_ratio,
+#      ebitda_margin, operating_cash_flow_per_share, sector: predictors
+
+df_filtered &lt;- df %&gt;%
+  filter(fiscal_year == &quot;2016&quot;) %&gt;%
+  select(
+    binary_rating,
+    rating,
+    current_ratio,
+    long_term_debt_capital,
+    debt_equity_ratio,
+    ebitda_margin,
+    operating_cash_flow_per_share,
+    sector
+  )
+
+# 2. Create two dataframes with different target variables
+#    a) df_binary: Binary.Rating as the first column
+#    b) df_rating: Rating as the first column
+
+df_binary &lt;- df_filtered %&gt;%
+  select(
+    Binary.Rating = binary_rating,
+    Current.Ratio = current_ratio,
+    Long.term.Debt...Capital = long_term_debt_capital,
+    Debt.Equity.Ratio = debt_equity_ratio,
+    EBITDA.Margin = ebitda_margin,
+    Operating.Cash.Flow.Per.Share = operating_cash_flow_per_share,
+    Sector = sector
+  )
+
+
+df_rating &lt;- df_filtered %&gt;%
+  select(
+    Rating                          = rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )</code></pre>
+<ol start="2" style="list-style-type: lower-alpha">
+<li>Report the number of observations, columns (with their meaning) and
+their data types. Indicate clearly what you will use as dependent
+variable/label.</li>
+</ol>
+<!-- REPORT IT BELOW -->
+</div>
+<div id="split-the-data-and-tranform-columns-as-necessary.-0.5pt" class="section level2">
+<h2>2. Split the data and tranform columns as necessary. (0.5pt)</h2>
+<p>Split the data into training (80%) and test set (80%). Transform the
+columns if necessary.</p>
+<pre class="r"><code># Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary &lt;- nrow(df_binary)
+train_idx_binary &lt;- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary &lt;- df_binary[train_idx_binary, ]
+test_binary &lt;- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating &lt;- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating &lt;- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+n_rating &lt;- nrow(df_rating)
+train_idx_rating &lt;- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating &lt;- df_rating[train_idx_rating, ]
+test_rating &lt;- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating &lt;- factor(train_rating$Rating)
+test_rating$Rating &lt;- factor(test_rating$Rating, levels = levels(train_rating$Rating))</code></pre>
+</div>
+<div id="model-exploration-3pt" class="section level2">
+<h2>3. Model Exploration (3pt)</h2>
+<ol style="list-style-type: lower-alpha">
+<li>Fit multiple appropriate models to the dataset (as many models as
+there are members in the group, with a minimum of two models). Models
+might vary in the multilevel structure, informativeness of their priors
+(but not just trivial changes), model of the data/likelihood, etc. (I
+recommend not to use no pooling models since they tend to take a long
+time and it's very hard to assign good priors). <strong>Assess if models
+converged: Report how the traceplots looks like, highest Rhat, number of
+effective samples, etc. If didn't converge, address the issues. (If you
+can't solve the problems, report them and continue with the
+assignment).</strong></li>
+</ol>
+<pre class="r"><code># parbayes_opt.R
+# R script for Bayesian hyperparameter optimization using ParBayesianOptimization
+
+# 0. Install and load packages
+if (!requireNamespace(&quot;ParBayesianOptimization&quot;, quietly = TRUE)) {
+  install.packages(&quot;ParBayesianOptimization&quot;)
+}
+if (!requireNamespace(&quot;brms&quot;, quietly = TRUE)) {
+  install.packages(&quot;brms&quot;)
+}
+if (!requireNamespace(&quot;loo&quot;, quietly = TRUE)) {
+  install.packages(&quot;loo&quot;)
+}
+library(ParBayesianOptimization)
+library(brms)
+library(loo)
+
+# 1. Prepare training data
+# Ensure 'train_binary' exists
+if (!exists(&quot;train_binary&quot;)) {
+  train_binary &lt;- read.csv(&quot;Input_Data/df_binary.csv&quot;)
+  train_binary$Binary.Rating &lt;- factor(train_binary$Binary.Rating)
+}
+
+# 2. Define the objective function with error handling
+# Returns a list with 'Score' to maximize (we use -LOOIC)
+obj_fun &lt;- function(sigma_fixed, sigma_group, adapt_delta) {
+  result &lt;- tryCatch(
+    {
+      # Build dynamic priors as strings
+      priors &lt;- c(
+        prior_string(paste0(&quot;normal(0, &quot;, round(sigma_fixed, 4), &quot;)&quot;), class = &quot;b&quot;),
+        prior_string(paste0(&quot;student_t(3, 0, &quot;, round(sigma_group, 4), &quot;)&quot;), class = &quot;sd&quot;)
+      )
+
+      # Fit the brms model
+      fit &lt;- brm(
+        formula = bf(
+          Binary.Rating ~ Current.Ratio +
+            `Long.term.Debt...Capital` +
+            Debt.Equity.Ratio +
+            EBITDA.Margin +
+            `Operating.Cash.Flow.Per.Share` +
+            (1 | Sector)
+        ),
+        data = train_binary,
+        family = bernoulli(link = &quot;logit&quot;),
+        prior = priors,
+        iter = 1000,
+        warmup = 500,
+        control = list(adapt_delta = adapt_delta),
+        cores = 4,
+        refresh = 0
+      )
+
+      # Compute LOOIC
+      looic_val &lt;- loo(fit)$estimates[&quot;looic&quot;, &quot;Estimate&quot;]
+      list(Score = -looic_val)
+    },
+    error = function(e) {
+      message(&quot;Objective error: &quot;, e$message)
+      return(NULL)
+    }
+  )
+  return(result)
+}
+
+# 3. Define search bounds
+bounds &lt;- list(
+  sigma_fixed = c(0.1, 10),
+  sigma_group = c(0.1, 5),
+  adapt_delta = c(0.8, 0.99)
+)
+
+# 4. Run Bayesian Optimization with progress reporting
+# set.seed(123)
+# opt_res &lt;- bayesOpt(
+#   FUN           = obj_fun,
+#   bounds        = bounds,
+#   initPoints    = 5,
+#   iters.n       = 15,
+#   acq           = &quot;ucb&quot;,       # Upper confidence bound
+#   kappa         = 2.576,         # exploration/exploitation trade-off
+#   verbose       = 2,             # textual progress
+#   plotProgress  = TRUE,          # acquisition plot
+#   dropNull      = TRUE           # skip failed evaluations
+# )
+#
+# # 5. Examine best hyperparameters
+# best_params &lt;- getBestPars(opt_res)
+# print(best_params)</code></pre>
+<!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
+<pre class="r"><code># Ensure brms is loaded
+if (!requireNamespace(&quot;brms&quot;, quietly = TRUE)) {
+  install.packages(&quot;brms&quot;, repos = &quot;https://cran.rstudio.com/&quot;)
+}
+library(brms)
+
+# Define priors for the cumulative model with cloglog link and random intercepts
+# These were the priors used in previous attempts for the cloglog model.
+cloglog_intercept_priors &lt;- c(
+  prior(normal(0, 1.5), class = b), # For all fixed effects, including interaction
+  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
+  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+)
+
+# Ensure train_rating is available and Rating is an ordered factor
+if (!exists(&quot;train_rating&quot;)) {
+  stop(&quot;train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.&quot;)
+}
+rating_levels_jom &lt;- c(
+  &quot;AAA&quot;, &quot;AA+&quot;, &quot;AA&quot;, &quot;AA-&quot;, &quot;A+&quot;, &quot;A&quot;, &quot;A-&quot;,
+  &quot;BBB+&quot;, &quot;BBB&quot;, &quot;BBB-&quot;, &quot;BB+&quot;, &quot;BB&quot;, &quot;BB-&quot;,
+  &quot;B+&quot;, &quot;B&quot;, &quot;B-&quot;, &quot;CCC&quot;, &quot;CC&quot;, &quot;C&quot;, &quot;D&quot;
+)
+if (!is.ordered(train_rating$Rating) || !all(levels(train_rating$Rating) == rating_levels_jom)) {
+  message(&quot;Refactoring train_rating$Rating in Jacob_Ordinal_Model chunk&quot;)
+  train_rating$Rating &lt;- factor(train_rating$Rating, levels = rating_levels_jom, ordered = TRUE)
+}
+
+
+# Fit the cumulative brm model with cloglog link and random intercepts
+# This includes the interaction term as per previous discussions.
+# Iterations are kept low for faster debugging; increase for final model.
+message(&quot;Fitting the fit_cumulative_logit_debug model...&quot;)
+fit_cumulative_logit_debug &lt;- tryCatch(
+  {
+    brm(
+      formula = bf(
+        Rating ~ Current.Ratio * Debt.Equity.Ratio + # Interaction term
+          `Long.term.Debt...Capital` +
+          EBITDA.Margin +
+          `Operating.Cash.Flow.Per.Share` +
+          (1 | Sector) # Random intercepts for Sector
+      ),
+      data = train_rating,
+      family = cumulative(link = &quot;logit&quot;), # Changed to logit for stability
+      prior = cloglog_intercept_priors, # Priors are general enough
+      iter = 500, # Slightly increased iterations
+      warmup = 200, # Slightly increased warmup
+      chains = 1, # Start with 1 chain for debugging
+      cores = 1,
+      control = list(adapt_delta = 0.95, max_treedepth = 10),
+      refresh = 10,
+      seed = 123
+    )
+  },
+  error = function(e) {
+    message(paste(&quot;Error fitting fit_cumulative_logit_debug:&quot;, e$message))
+    NULL # Return NULL if model fitting fails
+  }
+)</code></pre>
+<pre><code>
+SAMPLING FOR MODEL 'anon_model' NOW (CHAIN 1).
+Chain 1: 
+Chain 1: Gradient evaluation took 0.005591 seconds
+Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 55.91 seconds.
+Chain 1: Adjust your expectations accordingly!
+Chain 1: 
+Chain 1: 
+Chain 1: Iteration:   1 / 500 [  0%]  (Warmup)
+Chain 1: Iteration:  10 / 500 [  2%]  (Warmup)
+Chain 1: Iteration:  20 / 500 [  4%]  (Warmup)
+Chain 1: Iteration:  30 / 500 [  6%]  (Warmup)
+Chain 1: Iteration:  40 / 500 [  8%]  (Warmup)
+Chain 1: Iteration:  50 / 500 [ 10%]  (Warmup)
+Chain 1: Iteration:  60 / 500 [ 12%]  (Warmup)
+Chain 1: Iteration:  70 / 500 [ 14%]  (Warmup)
+Chain 1: Iteration:  80 / 500 [ 16%]  (Warmup)
+Chain 1: Iteration:  90 / 500 [ 18%]  (Warmup)
+Chain 1: Iteration: 100 / 500 [ 20%]  (Warmup)
+Chain 1: Iteration: 110 / 500 [ 22%]  (Warmup)
+Chain 1: Iteration: 120 / 500 [ 24%]  (Warmup)
+Chain 1: Iteration: 130 / 500 [ 26%]  (Warmup)
+Chain 1: Iteration: 140 / 500 [ 28%]  (Warmup)
+Chain 1: Iteration: 150 / 500 [ 30%]  (Warmup)
+Chain 1: Iteration: 160 / 500 [ 32%]  (Warmup)
+Chain 1: Iteration: 170 / 500 [ 34%]  (Warmup)
+Chain 1: Iteration: 180 / 500 [ 36%]  (Warmup)
+Chain 1: Iteration: 190 / 500 [ 38%]  (Warmup)
+Chain 1: Iteration: 200 / 500 [ 40%]  (Warmup)
+Chain 1: Iteration: 201 / 500 [ 40%]  (Sampling)
+Chain 1: Iteration: 210 / 500 [ 42%]  (Sampling)
+Chain 1: Iteration: 220 / 500 [ 44%]  (Sampling)
+Chain 1: Iteration: 230 / 500 [ 46%]  (Sampling)
+Chain 1: Iteration: 240 / 500 [ 48%]  (Sampling)
+Chain 1: Iteration: 250 / 500 [ 50%]  (Sampling)
+Chain 1: Iteration: 260 / 500 [ 52%]  (Sampling)
+Chain 1: Iteration: 270 / 500 [ 54%]  (Sampling)
+Chain 1: Iteration: 280 / 500 [ 56%]  (Sampling)
+Chain 1: Iteration: 290 / 500 [ 58%]  (Sampling)
+Chain 1: Iteration: 300 / 500 [ 60%]  (Sampling)
+Chain 1: Iteration: 310 / 500 [ 62%]  (Sampling)
+Chain 1: Iteration: 320 / 500 [ 64%]  (Sampling)
+Chain 1: Iteration: 330 / 500 [ 66%]  (Sampling)
+Chain 1: Iteration: 340 / 500 [ 68%]  (Sampling)
+Chain 1: Iteration: 350 / 500 [ 70%]  (Sampling)
+Chain 1: Iteration: 360 / 500 [ 72%]  (Sampling)
+Chain 1: Iteration: 370 / 500 [ 74%]  (Sampling)
+Chain 1: Iteration: 380 / 500 [ 76%]  (Sampling)
+Chain 1: Iteration: 390 / 500 [ 78%]  (Sampling)
+Chain 1: Iteration: 400 / 500 [ 80%]  (Sampling)
+Chain 1: Iteration: 410 / 500 [ 82%]  (Sampling)
+Chain 1: Iteration: 420 / 500 [ 84%]  (Sampling)
+Chain 1: Iteration: 430 / 500 [ 86%]  (Sampling)
+Chain 1: Iteration: 440 / 500 [ 88%]  (Sampling)
+Chain 1: Iteration: 450 / 500 [ 90%]  (Sampling)
+Chain 1: Iteration: 460 / 500 [ 92%]  (Sampling)
+Chain 1: Iteration: 470 / 500 [ 94%]  (Sampling)
+Chain 1: Iteration: 480 / 500 [ 96%]  (Sampling)
+Chain 1: Iteration: 490 / 500 [ 98%]  (Sampling)
+Chain 1: Iteration: 500 / 500 [100%]  (Sampling)
+Chain 1: 
+Chain 1:  Elapsed Time: 237.195 seconds (Warm-up)
+Chain 1:                57.479 seconds (Sampling)
+Chain 1:                294.674 seconds (Total)
+Chain 1: </code></pre>
+<pre class="r"><code>if (!is.null(fit_cumulative_logit_debug)) {
+  message("fit_cumulative_logit_debug model fitting complete (or attempted).")
+  # To see all parameters, especially fixed effects, increase max.rows
+  # e.g., print(summary(fit_cumulative_logit_debug), max.rows = 50)
+  print(summary(fit_cumulative_logit_debug))
+} else {
+  message("fit_cumulative_logit_debug model object is NULL due to fitting error.")
+}
+</code></pre>
+<pre><code> Family: cumulative 
+  Links: mu = logit; disc = identity 
+Formula: Rating ~ Current.Ratio * Debt.Equity.Ratio + Long.term.Debt...Capital + EBITDA.Margin + Operating.Cash.Flow.Per.Share + (1 | Sector) 
+   Data: train_rating (Number of observations: 756) 
+  Draws: 1 chains, each with iter = 500; warmup = 200; thin = 1;
+         total post-warmup draws = 300
+
+Multilevel Hyperparameters:
+~Sector (Number of levels: 10) 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)     0.45      0.17     0.21     0.82 1.02      101      117
+
+Regression Coefficients:
+                                Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS
+Intercept[1]                       -2.78      0.32    -3.45    -2.16 1.00      151
+Intercept[2]                       -2.56      0.31    -3.21    -1.97 1.02      141
+Intercept[3]                       -1.64      0.26    -2.13    -1.07 1.02      124
+Intercept[4]                       -1.43      0.25    -1.93    -0.91 1.01      177
+Intercept[5]                       -1.07      0.25    -1.56    -0.58 1.01      158
+Intercept[6]                       -0.24      0.23    -0.68     0.20 1.01      141
+Intercept[7]                        0.16      0.23    -0.27     0.58 1.01      142
+Intercept[8]                        0.65      0.22     0.21     1.03 1.01      178
+Intercept[9]                        1.15      0.22     0.73     1.56 1.01      197
+Intercept[10]                       1.69      0.22     1.27     2.09 1.01      176
+Intercept[11]                       2.16      0.23     1.71     2.60 1.01      203
+Intercept[12]                       2.59      0.24     2.12     3.03 1.01      190
+Intercept[13]                       3.11      0.24     2.63     3.52 1.01      198
+Intercept[14]                       3.82      0.27     3.29     4.31 1.01      169
+Intercept[15]                       4.49      0.29     3.90     5.04 1.00      243
+Intercept[16]                       6.32      0.44     5.57     7.25 1.00      198
+Intercept[17]                       7.03      0.55     6.05     8.19 1.00      162
+                                Tail_ESS
+Intercept[1]                         213
+Intercept[2]                         207
+Intercept[3]                         225
+Intercept[4]                         178
+Intercept[5]                         193
+Intercept[6]                         173
+Intercept[7]                         189
+Intercept[8]                         140
+Intercept[9]                         216
+Intercept[10]                        219
+Intercept[11]                        256
+Intercept[12]                        177
+Intercept[13]                        165
+Intercept[14]                        256
+Intercept[15]                        213
+Intercept[16]                        213
+Intercept[17]                        197
+ [ reached 'max' / getOption("max.print") -- omitted 7 rows ]
+
+Further Distributional Parameters:
+     Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+disc     1.00      0.00     1.00     1.00   NA       NA       NA
+
+Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).</code></pre>
+<p>{r, message = FALSE, results = "hide"} # models go here</p>
+<ol start="2" style="list-style-type: lower-alpha">
+<li>Explain each model and describe its structure (what they assume
+about potential population-level or group-level effects), and the type
+of priors used.</li>
+</ol>
+<!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+</div>
+<div id="model-checking-3pt" class="section level2">
+<h2>4. Model checking (3pt)</h2>
+<ol style="list-style-type: lower-alpha">
+<li>Perform a prior sensitivity analysis for each model and modify the
+model if appropriate. Justify.</li>
+</ol>
+<pre class="r"><code># Ensure the brms and bayesplot packages are loaded
+if (!requireNamespace(&quot;brms&quot;, quietly = TRUE)) install.packages(&quot;brms&quot;, repos = &quot;https://cran.rstudio.com/&quot;)
+if (!requireNamespace(&quot;bayesplot&quot;, quietly = TRUE)) install.packages(&quot;bayesplot&quot;, repos = &quot;https://cran.rstudio.com/&quot;)
+library(brms)
+library(bayesplot)
+library(ggplot2) # for labs()
+
+# Ensure train_rating is available and Rating is an ordered factor
+if (!exists(&quot;train_rating&quot;)) {
+  stop(&quot;train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.&quot;)
+}
+if (!is.ordered(train_rating$Rating)) {
+  rating_levels_psa &lt;- c(
+    &quot;AAA&quot;, &quot;AA+&quot;, &quot;AA&quot;, &quot;AA-&quot;, &quot;A+&quot;, &quot;A&quot;, &quot;A-&quot;,
+    &quot;BBB+&quot;, &quot;BBB&quot;, &quot;BBB-&quot;, &quot;BB+&quot;, &quot;BB&quot;, &quot;BB-&quot;,
+    &quot;B+&quot;, &quot;B&quot;, &quot;B-&quot;, &quot;CCC&quot;, &quot;CC&quot;, &quot;C&quot;, &quot;D&quot;
+  )
+  train_rating$Rating &lt;- factor(train_rating$Rating, levels = rating_levels_psa, ordered = TRUE)
+}
+
+# Define the model formula (should match fit_cumulative_cloglog_intercepts)
+model_formula_psa &lt;- bf(
+  Rating ~ Current.Ratio * Debt.Equity.Ratio +
+    `Long.term.Debt...Capital` +
+    EBITDA.Margin +
+    `Operating.Cash.Flow.Per.Share` +
+    (1 | Sector)
+)
+
+# Original priors (should match fit_cumulative_cloglog_intercepts)
+original_priors_psa &lt;- c(
+  prior(normal(0, 1.5), class = b),
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Alternative priors for sensitivity analysis
+# Tighter priors for fixed effects
+tighter_priors_psa &lt;- c(
+  prior(normal(0, 0.5), class = b), # Tighter SD for fixed effects
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Wider priors for fixed effects
+wider_priors_psa &lt;- c(
+  prior(normal(0, 3.0), class = b), # Wider SD for fixed effects
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Fit model with original priors (sampling from prior only)
+# Note: This can be slow. Using fewer iterations for demonstration.
+# Adjust iter/chains as needed for a real analysis, if model converges.
+# If the original model in Jacob_Ordinal_Model chunk fails, this will also fail.
+message(&quot;Fitting prior predictive with original priors...&quot;)
+fit_prior_original_psa &lt;- tryCatch(
+  {
+    brm(
+      formula = model_formula_psa,
+      data = train_rating,
+      family = cumulative(link = &quot;logit&quot;), # Changed to logit
+      prior = original_priors_psa,
+      sample_prior = &quot;only&quot;, # Key for prior predictive checks
+      iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0,
+      control = list(adapt_delta = 0.90) # May need adjustment
+    )
+  },
+  error = function(e) {
+    message(&quot;Error fitting prior predictive (original priors): &quot;, e$message)
+    return(NULL)
+  }
+)
+
+# Fit model with tighter priors
+message(&quot;Fitting prior predictive with tighter priors...&quot;)
+fit_prior_tighter_psa &lt;- if (!is.null(fit_prior_original_psa)) {
+  tryCatch(
+    {
+      update(fit_prior_original_psa,
+        prior = tighter_priors_psa, sample_prior = &quot;only&quot;,
+        iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0
+      )
+    },
+    error = function(e) {
+      message(&quot;Error fitting prior predictive (tighter priors): &quot;, e$message)
+      return(NULL)
+    }
+  )
+} else {
+  NULL
+}
+
+# Fit model with wider priors
+message(&quot;Fitting prior predictive with wider priors...&quot;)
+fit_prior_wider_psa &lt;- if (!is.null(fit_prior_original_psa)) {
+  tryCatch(
+    {
+      update(fit_prior_original_psa,
+        prior = wider_priors_psa, sample_prior = &quot;only&quot;,
+        iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0
+      )
+    },
+    error = function(e) {
+      message(&quot;Error fitting prior predictive (wider priors): &quot;, e$message)
+      return(NULL)
+    }
+  )
+} else {
+  NULL
+}
+
+# Compare prior predictive distributions for the outcome
+# (Plotting proportions of each rating category)
+if (!is.null(fit_prior_original_psa) &amp;&amp; !is.null(fit_prior_tighter_psa) &amp;&amp; !is.null(fit_prior_wider_psa)) {
+  pp_original_psa &lt;- posterior_predict(fit_prior_original_psa, ndraws = 100)
+  pp_tighter_psa &lt;- posterior_predict(fit_prior_tighter_psa, ndraws = 100)
+  pp_wider_psa &lt;- posterior_predict(fit_prior_wider_psa, ndraws = 100)
+
+  # Summarize as proportions for a few observations to keep plot manageable
+  prop_plot &lt;- function(pp_sample, title_suffix) {
+    # Take first 5 observations for plotting, convert to factor, then table, then proportions
+    df_plot &lt;- as.data.frame(lapply(1:min(5, ncol(pp_sample)), function(i) {
+      as.data.frame(prop.table(table(factor(pp_sample[, i], levels = levels(train_rating$Rating)))))
+    }))
+    # This part needs careful reshaping for ggplot if we want to compare side-by-side
+    # For simplicity, let's just plot the distribution of one observation's predicted categories
+    # For a more comprehensive plot, one might visualize the distribution of means or specific categories.
+
+    # Example: Plot distribution of categories for the first observation
+    if (ncol(pp_sample) &gt; 0) {
+      obs1_preds &lt;- factor(pp_sample[, 1], levels = levels(train_rating$Rating))
+      print(
+        ggplot(as.data.frame(obs1_preds), aes(x = obs1_preds)) +
+          geom_bar(aes(y = (..count..) / sum(..count..))) +
+          scale_y_continuous(labels = scales::percent) +
+          labs(title = paste("Prior Predictive Outcome (Obs 1) -", title_suffix), x = "Rating Category", y = "Proportion") +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      )
+    }
+  }
+
+  prop_plot(pp_original_psa, "Original Priors")
+  prop_plot(pp_tighter_psa, "Tighter Priors (b ~ N(0,0.5))")
+  prop_plot(pp_wider_psa, "Wider Priors (b ~ N(0,3.0))")
+} else {
+  message("One or more prior predictive models failed to fit. Skipping plots.")
+}</code></pre>
+<pre class="r"><code># You would typically also compare prior predictive distributions of key parameters
+# or functions of parameters if the model structure allows.
+# For fixed effects:
+if (!is.null(fit_prior_original_psa)) {
+  print(mcmc_areas(as.array(fit_prior_original_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title = "Original Fixed Effect Priors"))
+}</code></pre>
+<pre class="r"><code>if (!is.null(fit_prior_tighter_psa)) {
+  print(mcmc_areas(as.array(fit_prior_tighter_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title = "Tighter Fixed Effect Priors"))
+}</code></pre>
+<pre class="r"><code>if (!is.null(fit_prior_wider_psa)) {
+  print(mcmc_areas(as.array(fit_prior_wider_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title = "Wider Fixed Effect Priors"))
+}</code></pre>
+<p><strong>Interpretation of Prior Sensitivity Analysis:</strong></p>
+<p><em>Briefly explain here how changes in priors (e.g., making them
+tighter or wider) affect the prior predictive distributions. If the
+prior predictive distributions change significantly, it indicates
+sensitivity to prior choices. If they remain largely similar, or if the
+implied outcomes are all within a reasonable range, it suggests
+robustness. The goal is to ensure priors are not unintentionally overly
+influential or leading to absurd predictions before seeing the
+data.</em></p>
+<p><em>Based on the plots (if generated), comment on whether the model
+seems overly sensitive to the chosen priors for fixed effects. If the
+model fit_cumulative_cloglog_intercepts is used for actual
+inference, one would compare its posteriors to these priors.</em></p>
+<!-- EXPLAIN CONCLUSIONS AND WHETHER MODELS ARE KEPT, MODIFIED  -->
+<ol start="2" style="list-style-type: lower-alpha">
+<li>Conduct posterior predictive checks for each model to assess how
+well they fit the data. Explain what you conclude.</li>
+</ol>
+<pre class="r"><code># Ensure the main model object 'fit_cumulative_cloglog_intercepts' exists
+# This chunk assumes 'fit_cumulative_cloglog_intercepts' was successfully created
+# in the 'Jacob_Ordinal_Model' chunk.
+if (!exists("fit_cumulative_logit_debug")) {
+  stop("Model object 'fit_cumulative_logit_debug' not found. Please ensure the 'Jacob_Ordinal_Model' chunk has been run successfully and the model object is in the environment.")
+}
+
+# Check if the model object contains posterior draws
+if (is.null(fit_cumulative_logit_debug$fit) || nrow(as.data.frame(fit_cumulative_logit_debug)) == 0) {
+  message("The model 'fit_cumulative_logit_debug' does not appear to contain posterior samples. Posterior predictive checks cannot be performed.")
+  message("This usually indicates the model fitting process failed or was interrupted (e.g., convergence issues, no posterior draws).")
+} else {
+  message("Performing posterior predictive checks for 'fit_cumulative_logit_debug'...&quot;)
+
+  # Ensure train_rating is available and Rating is an ordered factor
+  if (!exists("train_rating")) {
+    stop("train_rating dataframe not found for PPCs.")
+  }
+  if (!is.ordered(train_rating$Rating)) {
+    rating_levels_ppc &lt;- c(
+      "AAA", "AA+", "AA", "AA-", "A+", "A", "A-",
+      "BBB+", "BBB", "BBB-", "BB+", "BB", "BB-",
+      "B+", "B", "B-", "CCC", "CC", "C", "D"
+    )
+    train_rating$Rating &lt;- factor(train_rating$Rating, levels = rating_levels_ppc, ordered = TRUE)
+  }
+
+  # Common PPC plots for ordinal models
+  # Density overlay of y vs y_rep (overall distribution)
+  # For ordinal, pp_check often defaults to bar plots or PIT checks.
+  # Let's use specific types useful for ordinal data.
+
+  # Plot 1: Bar plot of observed vs. replicated outcome categories
+  # (Shows proportions of each rating category)
+  print(pp_check(fit_cumulative_logit_debug, type = "bars", ndraws = 50) +
+    labs(title = "PPC: Observed vs. Replicated Rating Categories"))
+
+  # Plot 2: Bar plot grouped by a predictor (e.g., Sector, if not too many levels, or a binned continuous predictor)
+  # For Sector, it might be too cluttered if many sectors.
+  # As an example, let's try grouping by a binned version of a continuous predictor if that makes sense.
+  # For simplicity, we will stick to overall checks first.
+  # If you have a key categorical predictor with few levels, you can use `group = "YourPredictor"`
+  # Example: pp_check(fit_cumulative_cloglog_intercepts, type = "bars_grouped", group = "SomeFactor", ndraws = 50)
+
+  # Plot 3: LOO-PIT (Probability Integral Transform) checks
+  # These are good for checking overall calibration, especially for continuous or ordinal models.
+  # Options: "loo_pit_qq", "loo_pit_ecdf"
+  # Note: LOO calculations can be slow if not already done. `loo(fit)` might be needed first.
+  # For simplicity, we use the basic PIT check from pp_check if available directly for this model type.
+  # If direct PIT is not available, one might compute it manually or rely on other plots.
+
+  # For ordinal models, `ppc_stat_grouped` can be used with `stat = 'mean'` or `stat = 'prop'` (proportion of a specific category)
+  # or `ppc_rootogram` if applicable.
+
+  # Let's try a rootogram if available and suitable for this brms version and model family
+  # print(pp_check(fit_cumulative_cloglog_intercepts, type = "rootogram", style="standing"))
+
+
+  # Check for specific rating categories' proportions
+  # This requires more manual setup with posterior_predict and custom stats.
+  # For example, proportion of "AAA" ratings:
+  # prop_AAA_rep &lt;- function(y_rep) mean(y_rep == "AAA")
+  # print(pp_check(fit_cumulative_cloglog_intercepts, type = "stat", stat = "prop_AAA_rep", ndraws=200))
+
+  message("Posterior predictive checks displayed (if model fitting was successful).")
+}</code></pre>
+<p><strong>Interpretation of Posterior Predictive Checks:</strong></p>
+<p><em>Explain what the generated plots show. For
+`pp_check(type = "bars")`, compare the distribution of
+observed outcome categories (`y`) with the distributions of
+outcome categories replicated from the model's posterior predictive
+distribution (`y_rep`). If the model fits well, the
+`y_rep` distributions should look similar to the
+`y` distribution.</em></p>
+<p><em>If LOO-PIT plots were generated and look uniform, it suggests
+good calibration. Deviations from uniformity indicate
+miscalibration.</em></p>
+<p><em>Conclude whether the
+`fit_cumulative_cloglog_intercepts` model appears to capture
+the observed data generating process adequately based on these visual
+checks. Highlight any systematic discrepancies.</em></p>
+<!-- EXPLAIN CONCLUSIONS -->
+</div>
+<div id="model-comparison-1.5pt" class="section level2">
+<h2>5. Model Comparison (1.5pt)</h2>
+<ol style="list-style-type: lower-alpha">
+<li><p>Use k-fold cross-validation to compare the models.</p></li>
+<li><p>Determine the best model based on predictive accuracy and justify
+your decision.</p></li>
+</ol>
+<!-- DECISION -->
+</div>
+<div id="interpretation-of-important-parameters-1.5pt" class="section level2">
+<h2>6. Interpretation of Important Parameters (1.5pt)</h2>
+<p>Choose one of the best models and interpret its most important
+parameters.</p>
+<!-- INTERPRETATION AND CODE GOES HERE -->
+</div>
+</div>
+<div id="contributions-of-each-member" class="section level1">
+<h1>Contributions of each member</h1>
+<ul>
+<li></li>
+<li></li>
+<li></li>
+<li></li>
+</ul>
+</div>
+<div id="statement-of-technology" class="section level1">
+<h1>Statement of technology</h1>
+</div>
+<div id="references" class="section level1">
+<h1>References</h1>
+<!-- Complete if necessary -->
+</div>
+
+
+
+
+</div>
+
+<script>
+
+// add bootstrap table styles to pandoc tables
+function bootstrapStylePandocTables() {
+  $('tr.odd').parent('tbody').parent('table').addClass('table table-condensed');
+}
+$(document).ready(function () {
+  bootstrapStylePandocTables();
+});
+
+
+</script>
+
+<!-- tabsets -->
+
+<script>
+$(document).ready(function () {
+  window.buildTabsets("TOC");
+});
+
+$(document).ready(function () {
+  $('.tabset-dropdown > .nav-tabs > li').click(function () {
+    $(this).parent().toggleClass('nav-tabs-open');
+  });
+});
+</script>
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
