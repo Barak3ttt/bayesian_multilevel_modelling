@@ -1,0 +1,696 @@
+--
+title: "Group project"
+subtitle: "Group Number?"
+author: 
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+  - "FirstName LastName"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_download: false
+---
+
+```{r setup, include = FALSE}
+options(max.print= 120,
+        width = 90,
+        tibble.width = 80)
+knitr::opts_chunk$set(echo= TRUE,
+                      cache=FALSE,
+                      prompt=FALSE,
+                      tidy="styler",
+                      comment=NA,
+                      message=FALSE,
+                      warning=TRUE)
+
+knitr::opts_knit$set(width=90)
+knitr::opts_chunk$set(cache.extra = knitr::rand_seed)
+set.seed(42)
+```
+
+# Checklist {-}
+
+The submission includes the following.
+
+- [ ] RMD document where it's clear what is the code that corresponds to each question. 
+- [ ] Dataset
+- [ ] html/PDF document with the following
+    - [ ] Numbered questions and answers with text and all the necessary code.
+    - [ ] Subtitle indicates the group number 
+    - [ ] Name of all group members
+    - [ ] Details of specification of the work done by group members (e.g., who found the data, who did the pre-processing, who answered which questions, etc).
+    - [ ] Statement of technology. Did you use any AI tools? How?
+
+
+# Group project {-}
+
+For the project, we use the following packages:
+
+```{r, message = FALSE}
+## ...
+```
+
+## 1. Dataset Selection (0.5pt)
+Select a dataset with clusters such as schools, regions, or people with multiple observations per individual. (From for example, https://www.kaggle.com/) It would be a good idea to choose a smallish dataset (not too many rows, e.g., less than 1000) or subset it so that fitting the models doesn't take too long. 
+
+a. Describe the dataset with a couple of short sentences. What was its intended use? Are there papers that reference it? Provide information on how to obtain the dataset, including its source and any necessary preprocessing steps/feature engineering.
+
+
+<!-- DESCRIBE IT BELOW -->
+
+```{r get-data-direct, echo=TRUE, message=FALSE}
+# 0) Install & load httr for HTTP requests
+if (!requireNamespace("httr", quietly = TRUE)) {
+  install.packages("httr", repos = "https://cran.rstudio.com/")
+}
+library(httr)
+
+# 1) Kaggle credentials
+user <- "barakazor"
+key  <- "6bfceda688e1452d09191636ad94eeeb"
+
+# 2) Define working and data directories
+wd        <- getwd()
+data_dir  <- file.path(wd, "data")
+input_dir <- file.path(wd, "Input_Data")
+if (!dir.exists(data_dir))  dir.create(data_dir, recursive = TRUE)
+if (!dir.exists(input_dir)) dir.create(input_dir, recursive = TRUE)
+
+# 3) Download the ZIP via Kaggle REST API
+dataset_slug <- "kirtandelwadia/corporate-credit-rating-with-financial-ratios"
+zip_path     <- file.path(data_dir, "credit_rating.zip")
+download_url <- paste0("https://www.kaggle.com/api/v1/datasets/download/", dataset_slug)
+
+resp <- GET(
+  url             = download_url,
+  authenticate(user, key),
+  write_disk(zip_path, overwrite = TRUE),
+  config(followlocation = TRUE)
+)
+stop_for_status(resp)
+
+# 4) Unzip into data_dir
+unzipped <- unzip(zip_path, exdir = data_dir)
+csvs     <- unzipped[grepl("\\.csv$", unzipped)]
+if (length(csvs) == 0) stop("No CSV found in the downloaded ZIP.")
+
+# 5) Read the first CSV into R
+df_raw <- read.csv(csvs[1], stringsAsFactors = FALSE)
+
+# 6) Save to Input_Data/
+write.csv(
+  df_raw,
+  file      = file.path(input_dir, "df_raw.csv"),
+  row.names = FALSE
+)
+saveRDS(
+  df_raw,
+  file = file.path(input_dir, "df_raw.rds")
+)
+```
+
+
+```{r preprocess-2016, echo=TRUE, message=FALSE}
+# Load necessary packages (install if needed)
+library(readr)
+library(dplyr)
+library(janitor)
+library(lubridate)
+
+# Read raw data and clean column names explicitly
+input_dir <- file.path(wd, "Input_Data")   # adjust as needed
+df_raw <- read_csv(file.path(input_dir, "df_raw.csv"))
+
+# Use janitor::clean_names to ensure availability
+df_raw <- janitor::clean_names(df_raw)
+
+# Define ordered rating levels
+rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+
+# Create df with fiscal_year and scaled predictors
+df <- df_raw %>%
+  mutate(
+    rating_ord  = factor(rating, levels = rating_levels, ordered = TRUE),
+    sector      = forcats::fct_lump_n(sector, 10),
+    corporation = as.factor(corporation),
+    fiscal_year = lubridate::year(lubridate::ymd(rating_date))
+  ) %>%
+  mutate(across(
+    c(current_ratio, debt_equity_ratio, gross_margin,
+      operating_margin, net_profit_margin, roa_return_on_assets),
+    ~ as.numeric(scale(.x)), .names = "z_{col}")) %>%
+  tidyr::drop_na(rating_ord, sector, corporation)
+
+
+
+# 1. Filter for rating date in 2016 and select only the needed variables
+#    - binary_rating: Binary.Rating as DV
+#    - rating      : Rating as DV
+#    - current_ratio, long_term_debt_capital, debt_equity_ratio,
+#      ebitda_margin, operating_cash_flow_per_share, sector: predictors
+
+df_filtered <- df %>%
+  filter(fiscal_year == "2016") %>%
+  select(
+    binary_rating,
+    rating,
+    current_ratio,
+    long_term_debt_capital,
+    debt_equity_ratio,
+    ebitda_margin,
+    operating_cash_flow_per_share,
+    sector
+  )
+
+# 2. Create two dataframes with different target variables
+#    a) df_binary: Binary.Rating as the first column
+#    b) df_rating: Rating as the first column
+
+df_binary <- df_filtered %>%
+  select(
+    Binary.Rating = binary_rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )
+
+
+df_rating <- df_filtered %>%
+  select(
+    Rating                          = rating,
+    Current.Ratio                   = current_ratio,
+    Long.term.Debt...Capital        = long_term_debt_capital,
+    Debt.Equity.Ratio               = debt_equity_ratio,
+    EBITDA.Margin                   = ebitda_margin,
+    Operating.Cash.Flow.Per.Share   = operating_cash_flow_per_share,
+    Sector                          = sector
+  )
+```
+
+
+b. Report the number of observations, columns (with their meaning) and their data types. Indicate clearly what you will use as dependent variable/label. 
+
+<!-- REPORT IT BELOW -->
+
+## 2. Split the data and tranform columns as necessary. (0.5pt)
+ Split the data into training (80%) and test set (80%). Transform the columns if necessary.
+
+```{r splitdata, echo=TRUE, message=FALSE}
+# Load required package for splitting
+# (dplyr already loaded)
+
+set.seed(123) # for reproducibility
+
+# Split df_binary into 80% train and 20% test
+n_binary <- nrow(df_binary)
+train_idx_binary <- sample(seq_len(n_binary), size = 0.8 * n_binary)
+train_binary <- df_binary[train_idx_binary, ]
+test_binary <- df_binary[-train_idx_binary, ]
+
+# Ensure factor levels of Binary.Rating are consistent
+train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+test_binary$Binary.Rating <- factor(test_binary$Binary.Rating, levels = levels(train_binary$Binary.Rating))
+
+# Split df_rating into 80% train and 20% test
+n_rating <- nrow(df_rating)
+train_idx_rating <- sample(seq_len(n_rating), size = 0.8 * n_rating)
+train_rating <- df_rating[train_idx_rating, ]
+test_rating <- df_rating[-train_idx_rating, ]
+
+# Ensure factor levels of Rating are consistent
+train_rating$Rating <- factor(train_rating$Rating)
+test_rating$Rating <- factor(test_rating$Rating, levels = levels(train_rating$Rating))
+```
+
+## 3. Model Exploration (3pt)
+
+a. Fit multiple appropriate models to the dataset (as many models as there are members in the group, with a minimum of two models). Models might vary in the multilevel structure, informativeness of their priors (but not just trivial changes), model of the data/likelihood, etc. (I recommend not to use no pooling models since they tend to take a long time and it's very hard to assign good priors). **Assess if models converged: Report how the traceplots looks like, highest Rhat, number of effective samples, etc. If didn't converge, address the issues. (If you can't solve the problems, report them and continue with the assignment).**
+
+```{r hyperparamater, echo=TRUE, message=FALSE}
+# parbayes_opt.R
+# R script for Bayesian hyperparameter optimization using ParBayesianOptimization
+
+# 0. Install and load packages
+if (!requireNamespace("ParBayesianOptimization", quietly = TRUE)) {
+  install.packages("ParBayesianOptimization")
+}
+if (!requireNamespace("brms", quietly = TRUE)) {
+  install.packages("brms")
+}
+if (!requireNamespace("loo", quietly = TRUE)) {
+  install.packages("loo")
+}
+library(ParBayesianOptimization)
+library(brms)
+library(loo)
+
+# 1. Prepare training data
+# Ensure 'train_binary' exists
+if (!exists("train_binary")) {
+  train_binary <- read.csv("Input_Data/df_binary.csv")
+  train_binary$Binary.Rating <- factor(train_binary$Binary.Rating)
+}
+
+# 2. Define the objective function with error handling
+# Returns a list with 'Score' to maximize (we use -LOOIC)
+obj_fun <- function(sigma_fixed, sigma_group, adapt_delta) {
+  result <- tryCatch({
+    # Build dynamic priors as strings
+    priors <- c(
+      prior_string(paste0("normal(0, ", round(sigma_fixed,4), ")"), class = "b"),
+      prior_string(paste0("student_t(3, 0, ", round(sigma_group,4), ")"), class = "sd")
+    )
+
+    # Fit the brms model
+    fit <- brm(
+      formula = bf(
+        Binary.Rating ~ Current.Ratio +
+                        `Long.term.Debt...Capital` +
+                        Debt.Equity.Ratio +
+                        EBITDA.Margin +
+                        `Operating.Cash.Flow.Per.Share` +
+                        (1 | Sector)
+      ),
+      data    = train_binary,
+      family  = bernoulli(link = "logit"),
+      prior   = priors,
+      iter    = 1000,
+      warmup  = 500,
+      control = list(adapt_delta = adapt_delta),
+      cores   = 4,
+      refresh = 0
+    )
+
+    # Compute LOOIC
+    looic_val <- loo(fit)$estimates["looic", "Estimate"]
+    list(Score = -looic_val)
+  }, error = function(e) {
+    message("Objective error: ", e$message)
+    return(NULL)
+  })
+  return(result)
+}
+
+# 3. Define search bounds
+bounds <- list(
+  sigma_fixed = c(0.1, 10),
+  sigma_group = c(0.1, 5),
+  adapt_delta = c(0.8, 0.99)
+)
+
+# 4. Run Bayesian Optimization with progress reporting
+# set.seed(123)
+# opt_res <- bayesOpt(
+#   FUN           = obj_fun,
+#   bounds        = bounds,
+#   initPoints    = 5,
+#   iters.n       = 15,
+#   acq           = "ucb",       # Upper confidence bound
+#   kappa         = 2.576,         # exploration/exploitation trade-off
+#   verbose       = 2,             # textual progress
+#   plotProgress  = TRUE,          # acquisition plot
+#   dropNull      = TRUE           # skip failed evaluations
+# )
+# 
+# # 5. Examine best hyperparameters
+# best_params <- getBestPars(opt_res)
+# print(best_params)
+```
+
+
+<!-- message = FALSE, results = "hide" prevents displaying output, if you need to show something create another chunk of code -->
+
+```{r Jacob_Ordinal_Model, echo=TRUE, message=FALSE, warning=FALSE}
+# Ensure brms is loaded
+if (!requireNamespace("brms", quietly = TRUE)) {
+  install.packages("brms", repos = "https://cran.rstudio.com/")
+}
+library(brms)
+
+# Define priors for the cumulative model with cloglog link and random intercepts
+# These were the priors used in previous attempts for the cloglog model.
+cloglog_intercept_priors <- c(
+  prior(normal(0, 1.5), class = b),  # For all fixed effects, including interaction
+  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
+  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+)
+
+# Ensure train_rating is available and Rating is an ordered factor
+if (!exists("train_rating")) {
+    stop("train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.")
+}
+rating_levels_jom <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                   "BBB+","BBB","BBB-","BB+","BB","BB-",
+                   "B+","B","B-","CCC","CC","C","D")
+if (!is.ordered(train_rating$Rating) || !all(levels(train_rating$Rating) == rating_levels_jom)){
+    message("Refactoring train_rating$Rating in Jacob_Ordinal_Model chunk")
+    train_rating$Rating <- factor(train_rating$Rating, levels = rating_levels_jom, ordered = TRUE)
+}
+
+
+# Fit the cumulative brm model with cloglog link and random intercepts
+# This includes the interaction term as per previous discussions.
+# Iterations are kept low for faster debugging; increase for final model.
+message("Fitting the fit_cumulative_logit_debug model...")
+fit_cumulative_logit_debug <- tryCatch({
+  brm(
+    formula = bf(
+      Rating ~ Current.Ratio * Debt.Equity.Ratio + # Interaction term
+               `Long.term.Debt...Capital` +
+               EBITDA.Margin +
+               `Operating.Cash.Flow.Per.Share` +
+               (1 | Sector) # Random intercepts for Sector
+    ),
+    data    = train_rating,
+    family  = cumulative(link = "logit"), # Changed to logit for stability
+    prior   = cloglog_intercept_priors, # Priors are general enough
+    iter    = 500, # Slightly increased iterations
+    warmup  = 200, # Slightly increased warmup
+    chains  = 1,   # Start with 1 chain for debugging
+    cores   = 1,
+    control = list(adapt_delta = 0.95, max_treedepth = 10),
+    refresh = 10,
+    seed    = 123
+  )
+}, error = function(e) {
+  message(paste("Error fitting fit_cumulative_logit_debug:", e$message))
+  NULL # Return NULL if model fitting fails
+})
+
+if (!is.null(fit_cumulative_logit_debug)) {
+  message("fit_cumulative_logit_debug model fitting complete (or attempted).")
+  # To see all parameters, especially fixed effects, increase max.rows
+  # e.g., print(summary(fit_cumulative_logit_debug), max.rows = 50)
+  print(summary(fit_cumulative_logit_debug))
+} else {
+  message("fit_cumulative_logit_debug model object is NULL due to fitting error.")
+}
+
+```
+
+**Assessment of `fit_cumulative_logit_debug` Convergence (Question 3a):**
+
+*The `fit_cumulative_logit_debug` model was run with 1 chain for 500 iterations (200 warmup), resulting in 300 post-warmup draws. Based on the summary output in `Jacob.html` (which is truncated for predictor coefficients due to default print settings; see note in the R chunk above regarding `max.rows`):*
+
+*   *Multilevel Hyperparameters for `~Sector` (sd(Intercept)):*
+    *   *Estimate: 0.45 (95% CI: [0.21, 0.82])*
+    *   *Rhat: 1.02*
+    *   *Bulk_ESS: 101*
+    *   *Tail_ESS: 117*
+*   *Regression Coefficients (Ordinal Intercepts `Intercept[1]` through `Intercept[17]` are visible in the HTML):*
+    *   *Rhat values range from 1.00 to 1.02.*
+    *   *Bulk_ESS values are generally between 100 and 243 (e.g., `Intercept[1]` Bulk_ESS = 151, `Intercept[15]` Bulk_ESS = 243).*
+    *   *Tail_ESS values are generally between 140 and 256 (e.g., `Intercept[1]` Tail_ESS = 213, `Intercept[11]` Tail_ESS = 256).*
+
+*Critique:*
+*   *Rhat values: Ideally, Rhat should be very close to 1.0 (e.g., < 1.01). Values up to 1.02, as seen for the group-level SD and several intercepts, suggest potential convergence issues. Since only one chain was run, `brms` calculates Rhat by splitting the single chain; these values indicate that the chain may not have fully stabilized or mixed well.*
+*   *Effective Sample Sizes (ESS): The Bulk_ESS and Tail_ESS values are generally low (mostly in the 100s and low 200s). For reliable posterior estimates, ESS values of at least several hundred (e.g., >400) per chain are often recommended. These low values indicate high autocorrelation in the MCMC samples and suggest that the posterior estimates for the visible parameters (group-level SD and intercepts) might not be very stable or precise with only 300 post-warmup draws.*
+*   *Fixed Effects for Predictors: The Rhat and ESS values for the main predictor variables (e.g., `Current.Ratio`, `Debt.Equity.Ratio`, `Long.term.Debt...Capital`, `EBITDA.Margin`, `Operating.Cash.Flow.Per.Share`, and the interaction `Current.Ratio:Debt.Equity.Ratio`) are **not visible** in the current HTML output due to print limits. Their convergence status cannot be assessed from the provided HTML.*
+
+*Conclusion: Given the Rhat values slightly above 1.01 and the generally low ESS for the visible parameters, the `fit_cumulative_logit_debug` model, as run with these minimal settings (1 chain, 500 total iterations), shows signs of potential convergence issues and inefficient sampling. The results should be treated as preliminary and are likely unreliable for robust inference. For a reliable analysis, the model should be re-run with more chains (e.g., 3-4), significantly more iterations (e.g., `iter = 2000, warmup = 1000` or higher per chain), and then all convergence diagnostics (including traceplots, Rhat, and ESS for all parameters) should be carefully re-evaluated.*
+
+
+{r, message = FALSE, results = "hide"}
+# models go here
+
+
+
+b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
+
+<!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+**Model: `fit_cumulative_logit_debug`**
+
+*   **Dependent Variable:** `Rating`, an ordinal factor. The `train_rating` data has 756 observations. Based on the model summary (number of intercepts), there are 20 levels for `Rating`, implying K-1 = 19 intercepts/cutpoints are being estimated (though only 17 are visible in the truncated HTML output for `fit_cumulative_logit_debug`).
+*   **Model Family:** Cumulative Ordinal Regression with a logit link (`family = cumulative(link = "logit")`). This model estimates the probability of a rating falling into category *j* or below. The logit link models the log-odds of these cumulative probabilities.
+*   **Formula:** `Rating ~ Current.Ratio * Debt.Equity.Ratio + Long.term.Debt...Capital + EBITDA.Margin + Operating.Cash.Flow.Per.Share + (1 | Sector)`
+    *   **Fixed Effects:** The model includes the following financial ratios as predictors:
+        *   `Current.Ratio`
+        *   `Debt.Equity.Ratio`
+        *   `Long.term.Debt...Capital`
+        *   `EBITDA.Margin`
+        *   `Operating.Cash.Flow.Per.Share`
+        *   It also includes an interaction term: `Current.Ratio:Debt.Equity.Ratio`.
+    *   **Group-Level Effects (Multilevel Structure):** It specifies random intercepts for `Sector` using `(1 | Sector)`. This structure assumes that the baseline tendency for a corporation's rating (represented by the average position of the cutpoints on the logit scale) can vary randomly across different `Sector`s. The model estimates the standard deviation of these varying intercepts (`sd(Intercept)` for `~Sector`). The HTML output indicates 10 levels for the `Sector` grouping factor.
+*   **Priors:** The priors used were defined in the `cloglog_intercept_priors` object (despite the name, they are applied to this logit model):
+    *   For fixed effect coefficients (class `b`): `normal(0, 1.5)`.
+    *   For the standard deviation of the random intercepts for `Sector` (class `sd`): `student_t(3, 0, 2.5)`.
+    *   For the ordinal intercepts/cutpoints (class `Intercept`): `student_t(3, 0, 2.5)`.
+    These are generally considered weakly informative priors, allowing the data to primarily drive the posterior estimates while providing some regularization.
+*   **Sampling Parameters (for this debug run):** The model was fitted using 1 MCMC chain, with 500 total iterations per chain. The first 200 iterations were discarded as warmup, leaving 300 samples for posterior inference.
+
+This model aims to predict the ordinal credit rating category based on the specified financial ratios, while also accounting for systematic baseline differences in creditworthiness that might exist across different industry sectors.
+
+## 4. Model checking (3pt)
+
+a. Perform a prior sensitivity analysis for each model and modify the model if appropriate. Justify.
+
+```{r jacob_prior_sensitivity, echo=TRUE, message=FALSE, warning=FALSE}
+# Ensure the brms and bayesplot packages are loaded
+if (!requireNamespace("brms", quietly = TRUE)) install.packages("brms", repos = "https://cran.rstudio.com/")
+if (!requireNamespace("bayesplot", quietly = TRUE)) install.packages("bayesplot", repos = "https://cran.rstudio.com/")
+library(brms)
+library(bayesplot)
+library(ggplot2) # for labs()
+
+# Ensure train_rating is available and Rating is an ordered factor
+if (!exists("train_rating")) {
+    stop("train_rating dataframe not found. Ensure the 'splitdata' chunk has been run.")
+}
+if (!is.ordered(train_rating$Rating)) {
+    rating_levels_psa <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                           "BBB+","BBB","BBB-","BB+","BB","BB-",
+                           "B+","B","B-","CCC","CC","C","D")
+    train_rating$Rating <- factor(train_rating$Rating, levels = rating_levels_psa, ordered = TRUE)
+}
+
+# Define the model formula (should match fit_cumulative_cloglog_intercepts)
+model_formula_psa <- bf(
+    Rating ~ Current.Ratio * Debt.Equity.Ratio +
+             `Long.term.Debt...Capital` +
+             EBITDA.Margin +
+             `Operating.Cash.Flow.Per.Share` +
+             (1 | Sector)
+)
+
+# Original priors (should match fit_cumulative_cloglog_intercepts)
+original_priors_psa <- c(
+  prior(normal(0, 1.5), class = b),
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Alternative priors for sensitivity analysis
+# Tighter priors for fixed effects
+tighter_priors_psa <- c(
+  prior(normal(0, 0.5), class = b), # Tighter SD for fixed effects
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Wider priors for fixed effects
+wider_priors_psa <- c(
+  prior(normal(0, 3.0), class = b),   # Wider SD for fixed effects
+  prior(student_t(3, 0, 2.5), class = sd),
+  prior(student_t(3, 0, 2.5), class = Intercept)
+)
+
+# Fit model with original priors (sampling from prior only)
+# Note: This can be slow. Using fewer iterations for demonstration.
+# Adjust iter/chains as needed for a real analysis, if model converges.
+# If the original model in Jacob_Ordinal_Model chunk fails, this will also fail.
+message("Fitting prior predictive with original priors...")
+fit_prior_original_psa <- tryCatch({
+  brm(
+    formula = model_formula_psa,
+    data = train_rating,
+    family = cumulative(link = "logit"), # Changed to logit
+    prior = original_priors_psa,
+    sample_prior = "only", # Key for prior predictive checks
+    iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0,
+    control = list(adapt_delta = 0.90) # May need adjustment
+  )
+}, error = function(e) {
+  message("Error fitting prior predictive (original priors): ", e$message)
+  return(NULL)
+})
+
+# Fit model with tighter priors
+message("Fitting prior predictive with tighter priors...")
+fit_prior_tighter_psa <- if (!is.null(fit_prior_original_psa)) {
+  tryCatch({
+    update(fit_prior_original_psa, prior = tighter_priors_psa, sample_prior = "only",
+           iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0)
+  }, error = function(e) {
+    message("Error fitting prior predictive (tighter priors): ", e$message)
+    return(NULL)
+  })
+} else { NULL }
+
+# Fit model with wider priors
+message("Fitting prior predictive with wider priors...")
+fit_prior_wider_psa <- if (!is.null(fit_prior_original_psa)) {
+  tryCatch({
+    update(fit_prior_original_psa, prior = wider_priors_psa, sample_prior = "only",
+           iter = 500, warmup = 200, chains = 2, cores = 2, refresh = 0)
+  }, error = function(e) {
+    message("Error fitting prior predictive (wider priors): ", e$message)
+    return(NULL)
+  })
+} else { NULL }
+
+# Compare prior predictive distributions for the outcome
+# (Plotting proportions of each rating category)
+if (!is.null(fit_prior_original_psa) && !is.null(fit_prior_tighter_psa) && !is.null(fit_prior_wider_psa)) {
+  pp_original_psa <- posterior_predict(fit_prior_original_psa, ndraws = 100)
+  pp_tighter_psa  <- posterior_predict(fit_prior_tighter_psa, ndraws = 100)
+  pp_wider_psa    <- posterior_predict(fit_prior_wider_psa, ndraws = 100)
+
+  # Summarize as proportions for a few observations to keep plot manageable
+  prop_plot <- function(pp_sample, title_suffix) {
+    # Take first 5 observations for plotting, convert to factor, then table, then proportions
+    df_plot <- as.data.frame(lapply(1:min(5, ncol(pp_sample)), function(i) {
+      as.data.frame(prop.table(table(factor(pp_sample[,i], levels=levels(train_rating$Rating)))))
+    }))
+    # This part needs careful reshaping for ggplot if we want to compare side-by-side
+    # For simplicity, let's just plot the distribution of one observation's predicted categories
+    # For a more comprehensive plot, one might visualize the distribution of means or specific categories.
+    
+    # Example: Plot distribution of categories for the first observation
+    if (ncol(pp_sample) > 0) {
+        obs1_preds <- factor(pp_sample[,1], levels = levels(train_rating$Rating))
+        print(
+            ggplot(as.data.frame(obs1_preds), aes(x=obs1_preds)) + 
+            geom_bar(aes(y = (..count..)/sum(..count..))) + 
+            scale_y_continuous(labels = scales::percent) +
+            labs(title = paste("Prior Predictive Outcome (Obs 1) -", title_suffix), x = "Rating Category", y = "Proportion") +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1))
+        )
+    }
+  }
+  
+  prop_plot(pp_original_psa, "Original Priors")
+  prop_plot(pp_tighter_psa, "Tighter Priors (b ~ N(0,0.5))")
+  prop_plot(pp_wider_psa, "Wider Priors (b ~ N(0,3.0))")
+  
+} else {
+  message("One or more prior predictive models failed to fit. Skipping plots.")
+}
+
+# You would typically also compare prior predictive distributions of key parameters
+# or functions of parameters if the model structure allows.
+# For fixed effects:
+if (!is.null(fit_prior_original_psa)) {
+  print(mcmc_areas(as.array(fit_prior_original_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title="Original Fixed Effect Priors"))
+}
+if (!is.null(fit_prior_tighter_psa)) {
+  print(mcmc_areas(as.array(fit_prior_tighter_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title="Tighter Fixed Effect Priors"))
+}
+if (!is.null(fit_prior_wider_psa)) {
+  print(mcmc_areas(as.array(fit_prior_wider_psa), pars = vars(starts_with("b_")), prob = 0.95) + labs(title="Wider Fixed Effect Priors"))
+}
+
+```
+
+**Interpretation of Prior Sensitivity Analysis:**
+
+*The prior sensitivity analysis was conducted to assess how different prior specifications for the fixed effect parameters (class `b`) influence the prior predictive distributions and the prior distributions themselves. We compared the original priors (`normal(0, 1.5)` for fixed effects) with tighter priors (`normal(0, 0.5)`) and wider priors (`normal(0, 3.0)`). Priors for random effect standard deviations (`student_t(3, 0, 2.5)`) and ordinal cutpoints (`student_t(3, 0, 2.5)`) were kept constant across these analyses.*
+
+*The `mcmc_areas` plots generated in `Jacob.html` visually confirm the differences in the prior distributions for the fixed effects (`b_` parameters). As expected, the "Tighter Fixed Effect Priors" plot shows narrower distributions centered at 0 compared to the "Original Fixed Effect Priors," and the "Wider Fixed Effect Priors" plot displays broader distributions, reflecting the changes in standard deviation (0.5, 1.5, and 3.0 respectively). This confirms the priors were implemented as intended.*
+
+*The bar plots titled "Prior Predictive Outcome (Obs 1)" for each prior set (Original, Tighter, Wider) illustrate the expected proportions of rating categories for the first observation before conditioning on the actual data. By examining these plots in `Jacob.html`, we can assess sensitivity. If these plots show that all three prior sets lead to plausible (i.e., not concentrated on a single rating or overly diffuse) and broadly similar distributions of expected ratings—perhaps with slight variations in the spread or central tendency—this would suggest that the model's prior predictions for the outcome are not drastically altered by these specific changes in the width of fixed effect priors. Minor shifts are expected, but if, for instance, one set of priors predicted predominantly "AAA" ratings and another predominantly "D" ratings, that would signal high sensitivity. Assuming the plots show reasonable and not excessively divergent outcome predictions, the choice among these priors for fixed effects might not be critical based solely on the prior predictive outcomes for a single observation. The crucial step is always to evaluate the posterior after fitting with data.*
+
+**Interpreting Parameters for `fit_cumulative_logit_debug`**
+
+**Important Caveats:**
+1.  As detailed in the convergence assessment (Question 3a), the `fit_cumulative_logit_debug` model, with its current minimal run settings (1 chain, 500 iterations), shows signs of inadequate convergence and sampling efficiency (low ESS, Rhats > 1.01 for some parameters). **Therefore, any interpretation of its parameters must be considered highly preliminary, illustrative, and not reliable for substantive conclusions.** The model needs to be re-run with more iterations and chains, and convergence confirmed, before drawing firm conclusions.
+2.  The coefficient estimates, standard errors, credible intervals, and convergence diagnostics for the **fixed effect predictor variables** (e.g., `Current.Ratio`, `Debt.Equity.Ratio`, their interaction, etc.) are **not visible** in the `Jacob.html` output provided. This is due to the default printing limits of the `summary.brmsfit` object (indicated by the `[ reached 'max' / getOption("max.print") -- omitted 7 rows ]` message in the HTML). To enable interpretation of these crucial parameters, the R Markdown chunk `Jacob_Ordinal_Model` should be modified to print the full summary, for instance, by changing `print(summary(fit_cumulative_logit_debug))` to `print(summary(fit_cumulative_logit_debug), max.rows = 50)` (or a number large enough to show all rows).
+
+Given these significant limitations and the available output in `Jacob.html`, we can only discuss the parameters that are visible:
+
+*   **Multilevel Hyperparameter for `Sector`**:
+    *   `sd(Intercept)` for `~Sector`: Estimate = 0.45 (95% Credible Interval: [0.21, 0.82]).
+        *   **Interpretation:** This parameter quantifies the variability in the baseline credit rating tendency across the 10 different `Sector`s. An estimated standard deviation of 0.45 on the logit scale suggests a moderate amount of heterogeneity between sectors. If this value were close to zero, it would imply that all sectors share roughly the same baseline rating profile. The 95% CI [0.21, 0.82] is quite wide, indicating considerable uncertainty about this variability, likely due to the small number of sectors (10) and the limited MCMC iterations. A specific sector's random intercept (if examined from `ranef(fit_cumulative_logit_debug)`) would represent its deviation from the overall average logit-scale cutpoints. For example, a sector with a random intercept of +0.45 would have its cutpoints effectively shifted up by 0.45 on the logit scale compared to the average sector, making higher credit ratings more probable for companies in that sector, all else being equal.
+
+*   **Ordinal Intercepts (Cutpoints)**:
+    *   The model estimates K-1 = 19 intercepts (cutpoints) for the 20 ordered `Rating` categories. The visible intercepts in the HTML output for `fit_cumulative_logit_debug` range from `Intercept[1]` = -2.78 (95% CI: [-3.45, -2.16]) to `Intercept[17]` = 7.03 (95% CI: [6.05, 8.19]).
+    *   **Interpretation:** These intercepts define the thresholds on the continuous latent logit scale that separate adjacent rating categories. For example, `Intercept[1]` is the logit-scale threshold between the lowest rating category (e.g., "D") and the one above it (e.g., "C"). The values are constrained to be strictly increasing (`Intercept[1] < Intercept[2] < ... < Intercept[19]`). Their specific values are not directly interpretable in a simple way beyond defining these boundaries. The differences between them indicate the relative width of each rating category on the latent scale. Tightly clustered intercepts would suggest some categories are narrow and less distinct on the latent variable, while widely spaced intercepts suggest broader categories.
+
+**Interpreting Fixed Effects (Once Visible and Converged):**
+
+Once the model is properly run and converged, and the full summary is printed, one could interpret the fixed effect coefficients for predictors like `Current.Ratio` or `Debt.Equity.Ratio`.
+*   For a predictor like `Current.Ratio`, its coefficient would represent the change in the log-odds of an observation being in a higher rating category for a one-unit increase in `Current.Ratio`, holding all other variables constant.
+    *   A positive coefficient would suggest that higher values of the predictor are associated with higher credit ratings.
+    *   A negative coefficient would suggest an association with lower credit ratings.
+*   The interaction term `Current.Ratio:Debt.Equity.Ratio` would indicate whether the effect of `Current.Ratio` on credit ratings depends on the level of `Debt.Equity.Ratio` (and vice-versa). Its interpretation requires looking at the main effects and the interaction effect together.
+
+These interpretations would then be quantified with their respective credible intervals to express uncertainty.
+
+## 5. Model Comparison (1.5pt)
+
+a. Use k-fold cross-validation to compare the models.
+
+```{r}
+
+```
+b. Determine the best model based on predictive accuracy and justify your decision.
+
+<!-- DECISION -->
+
+
+## 6. Interpretation of Important Parameters (1.5pt)
+
+Choose one of the best models and interpret its most important parameters.
+
+<!-- INTERPRETATION AND CODE GOES HERE -->
+**Interpreting Parameters for `fit_cumulative_logit_debug`**
+
+**Important Caveats:**
+1.  As detailed in the convergence assessment (Question 3a), the `fit_cumulative_logit_debug` model, with its current minimal run settings (1 chain, 500 iterations), shows signs of inadequate convergence and sampling efficiency (low ESS, Rhats > 1.01 for some parameters). **Therefore, any interpretation of its parameters must be considered highly preliminary, illustrative, and not reliable for substantive conclusions.** The model needs to be re-run with more iterations and chains, and convergence confirmed, before drawing firm conclusions.
+2.  The coefficient estimates, standard errors, credible intervals, and convergence diagnostics for the **fixed effect predictor variables** (e.g., `Current.Ratio`, `Debt.Equity.Ratio`, their interaction, etc.) are **not visible** in the `Jacob.html` output provided. This is due to the default printing limits of the `summary.brmsfit` object (indicated by the `[ reached 'max' / getOption("max.print") -- omitted 7 rows ]` message in the HTML). To enable interpretation of these crucial parameters, the R Markdown chunk `Jacob_Ordinal_Model` should be modified to print the full summary, for instance, by changing `print(summary(fit_cumulative_logit_debug))` to `print(summary(fit_cumulative_logit_debug), max.rows = 50)` (or a number large enough to show all rows).
+
+Given these significant limitations and the available output in `Jacob.html`, we can only discuss the parameters that are visible:
+
+*   **Multilevel Hyperparameter for `Sector`**:
+    *   `sd(Intercept)` for `~Sector`: Estimate = 0.45 (95% Credible Interval: [0.21, 0.82]).
+        *   **Interpretation:** This parameter quantifies the variability in the baseline credit rating tendency across the 10 different `Sector`s. An estimated standard deviation of 0.45 on the logit scale suggests a moderate amount of heterogeneity between sectors. If this value were close to zero, it would imply that all sectors share roughly the same baseline rating profile. The 95% CI [0.21, 0.82] is quite wide, indicating considerable uncertainty about this variability, likely due to the small number of sectors (10) and the limited MCMC iterations. A specific sector's random intercept (if examined from `ranef(fit_cumulative_logit_debug)`) would represent its deviation from the overall average logit-scale cutpoints. For example, a sector with a random intercept of +0.45 would have its cutpoints effectively shifted up by 0.45 on the logit scale compared to the average sector, making higher credit ratings more probable for companies in that sector, all else being equal.
+
+*   **Ordinal Intercepts (Cutpoints)**:
+    *   The model estimates K-1 = 19 intercepts (cutpoints) for the 20 ordered `Rating` categories. The visible intercepts in the HTML output for `fit_cumulative_logit_debug` range from `Intercept[1]` = -2.78 (95% CI: [-3.45, -2.16]) to `Intercept[17]` = 7.03 (95% CI: [6.05, 8.19]).
+    *   **Interpretation:** These intercepts define the thresholds on the continuous latent logit scale that separate adjacent rating categories. For example, `Intercept[1]` is the logit-scale threshold between the lowest rating category (e.g., "D") and the one above it (e.g., "C"). The values are constrained to be strictly increasing (`Intercept[1] < Intercept[2] < ... < Intercept[19]`). Their specific values are not directly interpretable in a simple way beyond defining these boundaries. The differences between them indicate the relative width of each rating category on the latent scale. Tightly clustered intercepts would suggest some categories are narrow and less distinct on the latent variable, while widely spaced intercepts suggest broader categories.
+
+**Interpreting Fixed Effects (Once Visible and Converged):**
+
+Once the model is properly run and converged, and the full summary is printed, one could interpret the fixed effect coefficients for predictors like `Current.Ratio` or `Debt.Equity.Ratio`.
+*   For a predictor like `Current.Ratio`, its coefficient would represent the change in the log-odds of an observation being in a higher rating category for a one-unit increase in `Current.Ratio`, holding all other variables constant.
+    *   A positive coefficient would suggest that higher values of the predictor are associated with higher credit ratings.
+    *   A negative coefficient would suggest an association with lower credit ratings.
+*   The interaction term `Current.Ratio:Debt.Equity.Ratio` would indicate whether the effect of `Current.Ratio` on credit ratings depends on the level of `Debt.Equity.Ratio` (and vice-versa). Its interpretation requires looking at the main effects and the interaction effect together.
+
+These interpretations would then be quantified with their respective credible intervals to express uncertainty.
+
+
+# Contributions of each member 
+
+-
+-
+-
+-
+
+# Statement of technology
+
+
+# References
+
+<!-- Complete if necessary -->
+
