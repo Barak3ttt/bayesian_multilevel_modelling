@@ -379,7 +379,7 @@ display: none;
 <td>- “FirstName LastName”</td>
 </tr>
 <tr class="odd">
-<td>date: “2025-05-30”</td>
+<td>date: “2025-06-02”</td>
 </tr>
 <tr class="even">
 <td>output:</td>
@@ -654,11 +654,11 @@ if (!exists(&quot;train_binary&quot;)) {
 }
 
 # --- BEGIN MODIFIED BRM MODEL CALL ---
-# Define priors for the cumulative model with cloglog link and random intercepts
-cloglog_intercept_priors &lt;- c(
-  prior(normal(0, 1.5), class = b), # For all fixed effects, including interaction
-  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
-  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+# Define priors for the cumulative model with logit link and random intercepts (debugging)
+logit_intercept_priors_debug &lt;- c(
+  prior(normal(0, 1), class = b),
+  prior(student_t(3, 0, 1), class = sd),
+  prior(normal(0, 1), class = Intercept)
 )
 
 # Ensure train_rating is available and Rating is an ordered factor
@@ -674,49 +674,72 @@ rating_levels &lt;- c(
 train_rating$Rating &lt;- factor(train_rating$Rating, levels = rating_levels, ordered = TRUE)
 
 
-# Fit a standalone brms model (cumulative with cloglog link and random intercepts only)
-print(&quot;Fitting a cumulative brm model with cloglog link and random intercepts...&quot;)</code></pre>
-<pre><code>[1] &quot;Fitting a cumulative brm model with cloglog link and random intercepts...&quot;</code></pre>
-<pre class="r"><code>fit_cumulative_cloglog_intercepts &lt;- brm(
+# Fit a standalone brms model (cumulative with LOGIT link - debug attempt 3: changed link)
+print(&quot;Fitting a cumulative brm model with LOGIT link and random intercepts (debugging attempt 3)...&quot;)</code></pre>
+<pre><code>[1] &quot;Fitting a cumulative brm model with LOGIT link and random intercepts (debugging attempt 3)...&quot;</code></pre>
+<pre class="r"><code>fit_cumulative_logit_intercepts &lt;- brm(
   formula = bf(
-    Rating ~ Current.Ratio * Debt.Equity.Ratio + # Includes Current.Ratio, Debt.Equity.Ratio, and their interaction
+    Rating ~ Current.Ratio + Debt.Equity.Ratio +
       `Long.term.Debt...Capital` +
       EBITDA.Margin +
       `Operating.Cash.Flow.Per.Share` +
-      (1 | Sector) # Random intercepts for Sector
+      (1 | Sector)
   ),
   data = train_rating,
-  family = cumulative(link = &quot;cloglog&quot;), # Cumulative likelihood with cloglog link
-  prior = cloglog_intercept_priors,
+  family = cumulative(link = &quot;logit&quot;),
+  prior = logit_intercept_priors_debug,
   iter = 2000,
   warmup = 1000,
   control = list(adapt_delta = 0.95),
-  cores = 4,
+  cores = 1,
+  chains = 1,
+  init_r = 0.1,
   refresh = 0,
   seed = 123
-)</code></pre>
-<pre><code>Warning in .local(object, ...): some chains had errors; consider specifying chains = 1 to
-debug</code></pre>
-<pre><code>[[1]]
-Stan model &#39;anon_model&#39; does not contain samples.
-
-[[2]]
-Stan model &#39;anon_model&#39; does not contain samples.
-
-[[3]]
-Stan model &#39;anon_model&#39; does not contain samples.
-
-[[4]]
-Stan model &#39;anon_model&#39; does not contain samples.</code></pre>
-<pre class="r"><code>print(&quot;Cumulative cloglog brm model fitting complete.&quot;)</code></pre>
-<pre><code>[1] &quot;Cumulative cloglog brm model fitting complete.&quot;</code></pre>
-<pre class="r"><code>print(summary(fit_cumulative_cloglog_intercepts))</code></pre>
+)
+print(&quot;Cumulative LOGIT brm model fitting complete (debugging attempt 3).&quot;)</code></pre>
+<pre><code>[1] &quot;Cumulative LOGIT brm model fitting complete (debugging attempt 3).&quot;</code></pre>
+<pre class="r"><code>print(summary(fit_cumulative_logit_intercepts))</code></pre>
 <pre><code> Family: cumulative 
-  Links: mu = cloglog; disc = identity 
-Formula: Rating ~ Current.Ratio * Debt.Equity.Ratio + Long.term.Debt...Capital + EBITDA.Margin + Operating.Cash.Flow.Per.Share + (1 | Sector) 
+  Links: mu = logit; disc = identity 
+Formula: Rating ~ Current.Ratio + Debt.Equity.Ratio + Long.term.Debt...Capital + EBITDA.Margin + Operating.Cash.Flow.Per.Share + (1 | Sector) 
    Data: train_rating (Number of observations: 756) 
+  Draws: 1 chains, each with iter = 2000; warmup = 1000; thin = 1;
+         total post-warmup draws = 1000
 
-The model does not contain posterior draws.</code></pre>
+Multilevel Hyperparameters:
+~Sector (Number of levels: 10) 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)     0.38      0.14     0.18     0.72 1.00      396      598
+
+Regression Coefficients:
+                              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept[1]                     -2.58      0.27    -3.10    -2.06 1.00      903      712
+Intercept[2]                     -2.38      0.26    -2.88    -1.87 1.00     1041      627
+Intercept[3]                     -1.64      0.23    -2.10    -1.17 1.00     1225      823
+Intercept[4]                     -1.45      0.22    -1.88    -0.98 1.00     1217      771
+Intercept[5]                     -1.14      0.22    -1.58    -0.69 1.00     1424      742
+Intercept[6]                     -0.41      0.21    -0.83     0.01 1.00     1421      624
+Intercept[7]                     -0.03      0.21    -0.46     0.39 1.00     1317      667
+Intercept[8]                      0.42      0.21     0.02     0.84 1.00     1245      706
+Intercept[9]                      0.90      0.21     0.47     1.33 1.00     1345      715
+Intercept[10]                     1.39      0.22     0.96     1.85 1.00     1381      567
+Intercept[11]                     1.83      0.22     1.40     2.29 1.00     1373      556
+Intercept[12]                     2.22      0.23     1.78     2.72 1.00     1427      700
+Intercept[13]                     2.68      0.24     2.22     3.17 1.00     1385      613
+Intercept[14]                     3.29      0.25     2.79     3.80 1.00     1456      576
+Intercept[15]                     3.85      0.26     3.32     4.38 1.00     1244      469
+Intercept[16]                     5.04      0.30     4.44     5.64 1.01     1345      568
+Intercept[17]                     5.37      0.32     4.75     6.02 1.00     1471      718
+ [ reached &#39;max&#39; / getOption(&quot;max.print&quot;) -- omitted 6 rows ]
+
+Further Distributional Parameters:
+     Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+disc     1.00      0.00     1.00     1.00   NA       NA       NA
+
+Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).</code></pre>
 <pre class="r"><code># --- END MODIFIED BRM MODEL CALL ---
 
 # 2. Define the objective function with error handling
@@ -791,6 +814,75 @@ about potential population-level or group-level effects), and the type
 of priors used.</li>
 </ol>
 <!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
+<p><strong>Model 1: Cumulative Ordinal Regression with Random Intercepts
+and LOGIT Link (Debugging Version)</strong></p>
+<p>This model, named <code>fit_cumulative_logit_intercepts</code> in the
+R code, aims to predict the ordinal credit <code>Rating</code> based on
+several financial predictors.</p>
+<ul>
+<li><strong>Dependent Variable</strong>: <code>Rating</code>, treated as
+an ordered categorical variable.</li>
+<li><strong>Likelihood and Link Function</strong>: The model uses a
+<code>cumulative</code> likelihood with a <code>logit</code> (logistic)
+link function.
+<ul>
+<li>The cumulative likelihood is appropriate for ordinal responses,
+modeling the probability of a rating being in a certain category or
+lower.</li>
+<li>The <code>logit</code> link is a common choice, modeling the
+log-odds of falling into a category or lower. It assumes a symmetric
+logistic distribution for the latent variable.</li>
+</ul></li>
+<li><strong>Fixed Effects Structure</strong>: The model includes the
+following predictors as main effects:
+<ul>
+<li><code>Current.Ratio</code></li>
+<li><code>Debt.Equity.Ratio</code></li>
+<li><code>Long.term.Debt...Capital</code></li>
+<li><code>EBITDA.Margin</code></li>
+<li><code>Operating.Cash.Flow.Per.Share</code> The interaction term
+between <code>Current.Ratio</code> and <code>Debt.Equity.Ratio</code>
+has been removed for this debugging attempt. These predictors are
+assumed to have a consistent effect on the log-cumulative odds (or
+cloglog-transformed cumulative probabilities) of the <code>Rating</code>
+across all sectors.</li>
+</ul></li>
+<li><strong>Random Effects Structure</strong>: <code>(1 | Sector)</code>
+<ul>
+<li>This specifies random intercepts for each <code>Sector</code>. It
+assumes that the baseline propensity for a given credit rating (i.e.,
+the cutpoints on the latent scale) varies from sector to sector.</li>
+<li>It does <em>not</em> assume that the effects of the predictors
+(slopes) vary by sector.</li>
+</ul></li>
+<li><strong>Priors</strong>:
+<ul>
+<li>Fixed Effects (<code>class = b</code>): <code>normal(0, 1)</code> -
+This is a more conservative prior for the fixed effects compared to the
+original model.</li>
+<li>Standard Deviation of Random Intercepts (<code>class = sd</code> for
+<code>Sector</code>): <code>student_t(3, 0, 1)</code> - A more
+conservative prior for the standard deviation of the random
+intercepts.</li>
+<li>Cutpoints/Thresholds (<code>class = Intercept</code>):
+<code>normal(0, 1)</code> - A more conservative prior for the cutpoints
+compared to the original model.</li>
+</ul></li>
+<li><strong>Assumptions</strong>:
+<ul>
+<li>Proportional odds (or proportional hazards, in the context of
+cloglog): The effect of each predictor is assumed to be consistent
+across all cutpoints/thresholds of the ordinal outcome. This is a key
+assumption of standard cumulative models.</li>
+<li>The random intercepts for <code>Sector</code> are normally
+distributed.</li>
+<li>Observations are conditionally independent given the model
+parameters.</li>
+</ul></li>
+<li><strong>Estimation</strong>: The model was fitted using Bayesian
+methods with <code>brms</code>, employing 2000 total iterations per
+chain, with 1000 iterations as warmup.</li>
+</ul>
 </div>
 <div id="model-checking-3pt" class="section level2">
 <h2>4. Model checking (3pt)</h2>
@@ -807,6 +899,165 @@ model if appropriate. Justify.</li>
 well they fit the data. Explain what you conclude.</li>
 </ol>
 <!-- EXPLAIN CONCLUSIONS -->
+<ol start="3" style="list-style-type: lower-alpha">
+<li>Binary Classification Metrics from Ordinal Model</li>
+</ol>
+<p>While our primary model
+(<code>fit_cumulative_logit_intercepts</code>) predicts ordinal ratings,
+we can derive binary classification metrics by defining a threshold to
+group these ratings. For this exercise, we will classify ratings as
+either “Investment Grade” (AAA down to BBB-) or “Speculative Grade” (BB+
+down to D).</p>
+<p>We will predict probabilities for each rating category on the test
+set, sum the probabilities for all investment grade categories, and then
+use a 0.5 probability threshold on this sum to make a binary
+prediction.</p>
+<pre class="r"><code># Ensure the brms model object is available
+if (!exists(&quot;fit_cumulative_logit_intercepts&quot;)) {
+  stop(&quot;Model object &#39;fit_cumulative_logit_intercepts&#39; not found. Please ensure the model fitting chunk has been run.&quot;)
+}
+
+# Ensure the test_rating dataset is available
+if (!exists(&quot;test_rating&quot;)) {
+  stop(&quot;Test dataset &#39;test_rating&#39; not found. Please ensure the data splitting chunk has been run.&quot;)
+}
+
+# Load caret
+if (!requireNamespace(&quot;caret&quot;, quietly = TRUE)) {
+  install.packages(&quot;caret&quot;, repos = &quot;https://cran.rstudio.com/&quot;)
+}
+library(caret)
+
+# Define rating levels and investment grade threshold (full set for reference)
+rating_levels_full_definition &lt;- c(
+  &quot;AAA&quot;, &quot;AA+&quot;, &quot;AA&quot;, &quot;AA-&quot;, &quot;A+&quot;, &quot;A&quot;, &quot;A-&quot;,
+  &quot;BBB+&quot;, &quot;BBB&quot;, &quot;BBB-&quot;, &quot;BB+&quot;, &quot;BB&quot;, &quot;BB-&quot;,
+  &quot;B+&quot;, &quot;B&quot;, &quot;B-&quot;, &quot;CCC&quot;, &quot;CC&quot;, &quot;C&quot;, &quot;D&quot;
+)
+investment_grade_ratings &lt;- c(&quot;AAA&quot;, &quot;AA+&quot;, &quot;AA&quot;, &quot;AA-&quot;, &quot;A+&quot;, &quot;A&quot;, &quot;A-&quot;, &quot;BBB+&quot;, &quot;BBB&quot;, &quot;BBB-&quot;)
+
+# Get the actual levels observed in the response variable during model training
+observed_training_levels &lt;- as.character(unique(fit_cumulative_logit_intercepts$data$Rating))
+
+# Prepare a copy of test_rating for prediction
+test_rating_for_pred &lt;- test_rating
+
+# Crucial step: Re-factor the Rating column in the newdata to match ONLY the levels seen in training data&#39;s response.
+# Values in test_rating_for_pred$Rating not in observed_training_levels will become NA.
+test_rating_for_pred$Rating &lt;- factor(test_rating_for_pred$Rating,
+  levels = observed_training_levels,
+  ordered = TRUE
+)
+
+# Identify rows that are still valid for prediction (Rating is not NA after re-factoring)
+valid_pred_rows &lt;- !is.na(test_rating_for_pred$Rating)
+
+if (sum(valid_pred_rows) == 0) {
+  stop(&quot;No observations in test_rating have response levels matching the training data after re-factoring. Cannot proceed.&quot;)
+}
+
+# 1. Predict probabilities for each category on the valid subset of the test set
+pred_probs_ordinal &lt;- posterior_epred(fit_cumulative_logit_intercepts,
+  newdata = test_rating_for_pred[valid_pred_rows, ],
+  ndraws = 500
+)
+print(paste(&quot;Dimensions of pred_probs_ordinal:&quot;, paste(dim(pred_probs_ordinal), collapse = &quot;, &quot;)))</code></pre>
+<pre><code>[1] &quot;Dimensions of pred_probs_ordinal: 500, 189, 19&quot;</code></pre>
+<pre class="r"><code># Get the number of categories from the 3rd dimension of the output array
+num_categories_predicted &lt;- dim(pred_probs_ordinal)[3]
+
+if (num_categories_predicted == length(observed_training_levels)) {
+  # Correctly calculate mean probabilities: apply mean over the 1st dimension (draws)
+  # Results in a matrix of [observations, categories]
+  mean_pred_probs_ordinal &lt;- apply(pred_probs_ordinal, c(2, 3), mean)
+  colnames(mean_pred_probs_ordinal) &lt;- observed_training_levels
+} else {
+  stop(paste(
+    &quot;Mismatch between number of predicted categories (&quot;, num_categories_predicted,
+    &quot;) and length of observed training levels (&quot;, length(observed_training_levels), &quot;).&quot;
+  ))
+}
+
+# 2. Calculate the total probability of being investment grade for each valid observation
+# Only consider investment grade ratings that were actually present in training data columns
+relevant_investment_grade_ratings &lt;- intersect(colnames(mean_pred_probs_ordinal), investment_grade_ratings)
+prob_investment_grade &lt;- rowSums(mean_pred_probs_ordinal[, relevant_investment_grade_ratings, drop = FALSE])
+
+# 3. Convert to binary predictions (&quot;Investment&quot; vs &quot;Speculative&quot;) using a 0.5 threshold
+predicted_binary_labels &lt;- ifelse(prob_investment_grade &gt;= 0.5, &quot;Investment&quot;, &quot;Speculative&quot;)
+predicted_binary_labels &lt;- factor(predicted_binary_labels, levels = c(&quot;Investment&quot;, &quot;Speculative&quot;))
+
+# 4. Determine true binary labels from the *valid* subset of original test_rating
+# Use the original test_rating here for true labels, but only for rows that were valid for prediction
+original_valid_ratings &lt;- test_rating$Rating[valid_pred_rows]
+true_binary_labels &lt;- ifelse(original_valid_ratings %in% investment_grade_ratings, &quot;Investment&quot;, &quot;Speculative&quot;)
+true_binary_labels &lt;- factor(true_binary_labels, levels = c(&quot;Investment&quot;, &quot;Speculative&quot;))
+
+# 5. Compute and print confusion matrix and metrics
+# Check if there is variability in both true and predicted labels
+if (length(unique(predicted_binary_labels)) &lt; 2 || length(unique(true_binary_labels)) &lt; 2) {
+  message(&quot;Warning: One or both factors (predicted or true labels) have fewer than 2 levels (e.g., all predictions are &#39;Investment&#39;).&quot;)
+  message(&quot;Standard confusion matrix metrics from caret might not be meaningful or directly computable in this scenario.&quot;)
+  message(&quot;Predicted distribution:&quot;)
+  print(table(predicted_binary_labels))
+  message(&quot;True distribution:&quot;)
+  print(table(true_binary_labels))
+  # Add custom calculations if needed for this edge case, e.g. accuracy if all match.
+  if (length(unique(predicted_binary_labels)) == 1 &amp;&amp; length(unique(true_binary_labels)) == 1 &amp;&amp; unique(predicted_binary_labels) == unique(true_binary_labels)) {
+    cat(&quot;Accuracy: 100% (all predictions match the single true class)\n&quot;)
+  } else {
+    cat(&quot;Accuracy, Precision, Recall, F1 cannot be reliably calculated by caret.\n&quot;)
+  }
+} else {
+  conf_matrix_obj &lt;- confusionMatrix(
+    data = predicted_binary_labels,
+    reference = true_binary_labels,
+    positive = &quot;Investment&quot;
+  )
+
+  print(conf_matrix_obj$table) # Print the confusion matrix table
+
+  accuracy &lt;- conf_matrix_obj$overall[&quot;Accuracy&quot;]
+  precision &lt;- conf_matrix_obj$byClass[&quot;Precision&quot;]
+  recall &lt;- conf_matrix_obj$byClass[&quot;Recall&quot;]
+  f1_score &lt;- conf_matrix_obj$byClass[&quot;F1&quot;]
+
+  cat(&quot;\nBinary Classification Metrics (Positive Class: &#39;Investment&#39;):\n&quot;)
+  cat(&quot;Accuracy: &quot;, ifelse(is.na(accuracy), &quot;NA&quot;, round(accuracy, 4)), &quot;\n&quot;)
+  cat(&quot;Precision: &quot;, ifelse(is.na(precision), &quot;NA&quot;, round(precision, 4)), &quot;\n&quot;)
+  cat(&quot;Recall (Sensitivity): &quot;, ifelse(is.na(recall), &quot;NA&quot;, round(recall, 4)), &quot;\n&quot;)
+  cat(&quot;F1-Score: &quot;, ifelse(is.na(f1_score), &quot;NA&quot;, round(f1_score, 4)), &quot;\n&quot;)
+}</code></pre>
+<pre><code>             Reference
+Prediction    Investment Speculative
+  Investment         111          69
+  Speculative          0           9
+
+Binary Classification Metrics (Positive Class: &#39;Investment&#39;):
+Accuracy:  0.6349 
+Precision:  0.6167 
+Recall (Sensitivity):  1 
+F1-Score:  0.7629 </code></pre>
+<p><strong>Interpretation of Metrics:</strong></p>
+<ul>
+<li><strong>Accuracy</strong>: Overall, how often is the classifier
+correct in distinguishing between Investment and Speculative grade? (
+(TP+TN)/total )</li>
+<li><strong>Precision</strong>: When the model predicts a rating is
+“Investment” grade, how often is it actually Investment grade? (
+TP/(TP+FP) ) - This measures the reliability of positive
+predictions.</li>
+<li><strong>Recall (Sensitivity)</strong>: Of all the companies that are
+actually “Investment” grade, how many did the model correctly identify?
+( TP/(TP+FN) ) - This measures how well the model finds all the positive
+cases.</li>
+<li><strong>F1-Score</strong>: The harmonic mean of Precision and
+Recall. It provides a single score that balances both concerns, which is
+especially useful if there’s an imbalance between the number of
+Investment and Speculative grade companies.</li>
+</ul>
+<p>These metrics will give a quantitative assessment of how well the
+ordinal model performs on this derived binary task.</p>
 </div>
 <div id="model-comparison-1.5pt" class="section level2">
 <h2>5. Model Comparison (1.5pt)</h2>

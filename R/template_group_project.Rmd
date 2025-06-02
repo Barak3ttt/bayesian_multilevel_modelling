@@ -263,11 +263,11 @@ if (!exists("train_binary")) {
 }
 
 # --- BEGIN MODIFIED BRM MODEL CALL ---
-# Define priors for the cumulative model with cloglog link and random intercepts
-cloglog_intercept_priors <- c(
-  prior(normal(0, 1.5), class = b),  # For all fixed effects, including interaction
-  prior(student_t(3, 0, 2.5), class = sd), # For standard deviation of random intercepts
-  prior(student_t(3, 0, 2.5), class = Intercept) # For cutpoints in cumulative model
+# Define priors for the cumulative model with logit link and random intercepts (debugging)
+logit_intercept_priors_debug <- c(
+  prior(normal(0, 1), class = b),  
+  prior(student_t(3, 0, 1), class = sd), 
+  prior(normal(0, 1), class = Intercept) 
 )
 
 # Ensure train_rating is available and Rating is an ordered factor
@@ -281,28 +281,30 @@ rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
 train_rating$Rating <- factor(train_rating$Rating, levels = rating_levels, ordered = TRUE)
 
 
-# Fit a standalone brms model (cumulative with cloglog link and random intercepts only)
-print("Fitting a cumulative brm model with cloglog link and random intercepts...")
-fit_cumulative_cloglog_intercepts <- brm(
+# Fit a standalone brms model (cumulative with LOGIT link - debug attempt 3: changed link)
+print("Fitting a cumulative brm model with LOGIT link and random intercepts (debugging attempt 3)...")
+fit_cumulative_logit_intercepts <- brm(
   formula = bf(
-    Rating ~ Current.Ratio * Debt.Equity.Ratio + # Includes Current.Ratio, Debt.Equity.Ratio, and their interaction
+    Rating ~ Current.Ratio + Debt.Equity.Ratio + 
              `Long.term.Debt...Capital` +
              EBITDA.Margin +
              `Operating.Cash.Flow.Per.Share` +
-             (1 | Sector) # Random intercepts for Sector
+             (1 | Sector) 
   ),
   data    = train_rating,
-  family  = cumulative(link = "cloglog"), # Cumulative likelihood with cloglog link
-  prior   = cloglog_intercept_priors,
+  family  = cumulative(link = "logit"),
+  prior   = logit_intercept_priors_debug,
   iter    = 2000,
   warmup  = 1000,
   control = list(adapt_delta = 0.95),
-  cores   = 4,
+  cores   = 1,  
+  chains  = 1,  
+  init_r  = 0.1, 
   refresh = 0,
   seed    = 123
 )
-print("Cumulative cloglog brm model fitting complete.")
-print(summary(fit_cumulative_cloglog_intercepts))
+print("Cumulative LOGIT brm model fitting complete (debugging attempt 3).")
+print(summary(fit_cumulative_logit_intercepts))
 # --- END MODIFIED BRM MODEL CALL ---
 
 # 2. Define the objective function with error handling
@@ -382,29 +384,29 @@ print(summary(fit_cumulative_cloglog_intercepts))
 b. Explain each model and describe its structure (what they assume about potential population-level or group-level effects), and the type of priors used. 
 
 <!-- EXPLAIN BELOW, REFER TO EACH MODEL -->
-**Model 1: Cumulative Ordinal Regression with Random Intercepts and Cloglog Link**
+**Model 1: Cumulative Ordinal Regression with Random Intercepts and LOGIT Link (Debugging Version)**
 
-This model, named `fit_cumulative_cloglog_intercepts` in the R code, aims to predict the ordinal credit `Rating` based on several financial predictors.
+This model, named `fit_cumulative_logit_intercepts` in the R code, aims to predict the ordinal credit `Rating` based on several financial predictors.
 
 *   **Dependent Variable**: `Rating`, treated as an ordered categorical variable.
-*   **Likelihood and Link Function**: The model uses a `cumulative` likelihood with a `cloglog` (complementary log-log) link function.
+*   **Likelihood and Link Function**: The model uses a `cumulative` likelihood with a `logit` (logistic) link function.
     *   The cumulative likelihood is appropriate for ordinal responses, modeling the probability of a rating being in a certain category or lower.
-    *   The `cloglog` link is an alternative to the more common `logit` link. It's asymmetric and can be particularly useful when the probability of one extreme (either the lowest or highest category) is more prevalent or of particular interest, or when the rate of change towards one end of the probability scale is different from the other. For example, if lower ratings are rare and the probability of transitioning out of them changes slowly at first, then more rapidly, a cloglog link might be suitable.
-*   **Fixed Effects Structure**: The model includes the following predictors as fixed effects:
+    *   The `logit` link is a common choice, modeling the log-odds of falling into a category or lower. It assumes a symmetric logistic distribution for the latent variable.
+*   **Fixed Effects Structure**: The model includes the following predictors as main effects:
     *   `Current.Ratio`
     *   `Debt.Equity.Ratio`
-    *   An interaction term: `Current.Ratio * Debt.Equity.Ratio` (which means the model estimates main effects for both, plus their combined effect).
     *   `Long.term.Debt...Capital`
     *   `EBITDA.Margin`
     *   `Operating.Cash.Flow.Per.Share`
+    The interaction term between `Current.Ratio` and `Debt.Equity.Ratio` has been removed for this debugging attempt.
     These predictors are assumed to have a consistent effect on the log-cumulative odds (or cloglog-transformed cumulative probabilities) of the `Rating` across all sectors.
 *   **Random Effects Structure**: `(1 | Sector)`
     *   This specifies random intercepts for each `Sector`. It assumes that the baseline propensity for a given credit rating (i.e., the cutpoints on the latent scale) varies from sector to sector.
     *   It does *not* assume that the effects of the predictors (slopes) vary by sector.
 *   **Priors**:
-    *   Fixed Effects (`class = b`): `normal(0, 1.5)` - This is a weakly informative prior, suggesting that the predictor coefficients are centered around 0 with a standard deviation of 1.5 on the cloglog scale. For standardized predictors, this allows for reasonably sized effects.
-    *   Standard Deviation of Random Intercepts (`class = sd` for `Sector`): `student_t(3, 0, 2.5)` - A weakly informative prior for the variability of the intercepts across sectors. The Student's t-distribution with 3 degrees of freedom has heavier tails than a normal distribution, making it robust to outliers.
-    *   Cutpoints/Thresholds (`class = Intercept`): `student_t(3, 0, 2.5)` - Weakly informative priors for the estimated thresholds that define the boundaries between the ordered categories of `Rating` on the latent cloglog scale.
+    *   Fixed Effects (`class = b`): `normal(0, 1)` - This is a more conservative prior for the fixed effects compared to the original model.
+    *   Standard Deviation of Random Intercepts (`class = sd` for `Sector`): `student_t(3, 0, 1)` - A more conservative prior for the standard deviation of the random intercepts.
+    *   Cutpoints/Thresholds (`class = Intercept`): `normal(0, 1)` - A more conservative prior for the cutpoints compared to the original model.
 *   **Assumptions**:
     *   Proportional odds (or proportional hazards, in the context of cloglog): The effect of each predictor is assumed to be consistent across all cutpoints/thresholds of the ordinal outcome. This is a key assumption of standard cumulative models.
     *   The random intercepts for `Sector` are normally distributed.
@@ -433,14 +435,14 @@ Explain what you conclude.
 
 c. Binary Classification Metrics from Ordinal Model
 
-While our primary model (`fit_cumulative_cloglog_intercepts`) predicts ordinal ratings, we can derive binary classification metrics by defining a threshold to group these ratings. For this exercise, we will classify ratings as either "Investment Grade" (AAA down to BBB-) or "Speculative Grade" (BB+ down to D).
+While our primary model (`fit_cumulative_logit_intercepts`) predicts ordinal ratings, we can derive binary classification metrics by defining a threshold to group these ratings. For this exercise, we will classify ratings as either "Investment Grade" (AAA down to BBB-) or "Speculative Grade" (BB+ down to D).
 
 We will predict probabilities for each rating category on the test set, sum the probabilities for all investment grade categories, and then use a 0.5 probability threshold on this sum to make a binary prediction.
 
 ```{r calculate-binary-metrics, echo=TRUE, message=FALSE, warning=FALSE}
-# Ensure the brms model object is available (it should be if the hyperparameter chunk ran)
-if (!exists("fit_cumulative_cloglog_intercepts")) {
-  stop("Model object 'fit_cumulative_cloglog_intercepts' not found. Please ensure the model fitting chunk has been run.")
+# Ensure the brms model object is available
+if (!exists("fit_cumulative_logit_intercepts")) {
+  stop("Model object 'fit_cumulative_logit_intercepts' not found. Please ensure the model fitting chunk has been run.")
 }
 
 # Ensure the test_rating dataset is available
@@ -448,45 +450,69 @@ if (!exists("test_rating")) {
   stop("Test dataset 'test_rating' not found. Please ensure the data splitting chunk has been run.")
 }
 
-# Load necessary library for metrics if not already loaded
+# Load caret
 if (!requireNamespace("caret", quietly = TRUE)) {
   install.packages("caret", repos = 'https://cran.rstudio.com/')
 }
 library(caret)
 
-# Define rating levels and investment grade threshold
-rating_levels <- c("AAA","AA+","AA","AA-","A+","A","A-",
-                   "BBB+","BBB","BBB-","BB+","BB","BB-",
-                   "B+","B","B-","CCC","CC","C","D")
+# Define rating levels and investment grade threshold (full set for reference)
+rating_levels_full_definition <- c("AAA","AA+","AA","AA-","A+","A","A-",
+                                 "BBB+","BBB","BBB-","BB+","BB","BB-",
+                                 "B+","B","B-","CCC","CC","C","D")
 investment_grade_ratings <- c("AAA","AA+","AA","AA-","A+","A","A-", "BBB+","BBB","BBB-")
 
-# Ensure Rating in test_rating is an ordered factor with correct levels
-test_rating$Rating <- factor(test_rating$Rating, levels = rating_levels, ordered = TRUE)
+# Get the actual levels observed in the response variable during model training
+observed_training_levels <- as.character(unique(fit_cumulative_logit_intercepts$data$Rating))
 
-# 1. Predict probabilities for each category on the test set
-# posterior_epred gives expected probabilities for each category
-# Using a smaller number of draws for faster execution during knitting, increase for more stable estimates.
-pred_probs_ordinal <- posterior_epred(fit_cumulative_cloglog_intercepts, newdata = test_rating, ndraws = 500) 
+# Prepare a copy of test_rating for prediction
+test_rating_for_pred <- test_rating
 
-# pred_probs_ordinal is an array: (draws, observations, categories)
-# We want the mean probability for each category for each observation
-mean_pred_probs_ordinal <- colMeans(pred_probs_ordinal) # Now (observations, categories)
-if(ncol(mean_pred_probs_ordinal) == length(rating_levels)){
-    colnames(mean_pred_probs_ordinal) <- rating_levels # Assign category names
-} else {
-    stop("Mismatch between number of predicted categories and length of rating_levels.")
+# Crucial step: Re-factor the Rating column in the newdata to match ONLY the levels seen in training data's response.
+# Values in test_rating_for_pred$Rating not in observed_training_levels will become NA.
+test_rating_for_pred$Rating <- factor(test_rating_for_pred$Rating, 
+                                      levels = observed_training_levels, 
+                                      ordered = TRUE)
+
+# Identify rows that are still valid for prediction (Rating is not NA after re-factoring)
+valid_pred_rows <- !is.na(test_rating_for_pred$Rating)
+
+if(sum(valid_pred_rows) == 0){
+    stop("No observations in test_rating have response levels matching the training data after re-factoring. Cannot proceed.")
 }
 
+# 1. Predict probabilities for each category on the valid subset of the test set
+pred_probs_ordinal <- posterior_epred(fit_cumulative_logit_intercepts, 
+                                      newdata = test_rating_for_pred[valid_pred_rows, ], 
+                                      ndraws = 500)
+print(paste("Dimensions of pred_probs_ordinal:", paste(dim(pred_probs_ordinal), collapse = ", ")))
 
-# 2. Calculate the total probability of being investment grade for each observation
-prob_investment_grade <- rowSums(mean_pred_probs_ordinal[, intersect(colnames(mean_pred_probs_ordinal), investment_grade_ratings), drop = FALSE])
+# Get the number of categories from the 3rd dimension of the output array
+num_categories_predicted <- dim(pred_probs_ordinal)[3]
+
+if(num_categories_predicted == length(observed_training_levels)){
+    # Correctly calculate mean probabilities: apply mean over the 1st dimension (draws)
+    # Results in a matrix of [observations, categories]
+    mean_pred_probs_ordinal <- apply(pred_probs_ordinal, c(2, 3), mean)
+    colnames(mean_pred_probs_ordinal) <- observed_training_levels
+} else {
+    stop(paste("Mismatch between number of predicted categories (", num_categories_predicted,
+               ") and length of observed training levels (", length(observed_training_levels), ")."))
+}
+
+# 2. Calculate the total probability of being investment grade for each valid observation
+# Only consider investment grade ratings that were actually present in training data columns
+relevant_investment_grade_ratings <- intersect(colnames(mean_pred_probs_ordinal), investment_grade_ratings)
+prob_investment_grade <- rowSums(mean_pred_probs_ordinal[, relevant_investment_grade_ratings, drop = FALSE])
 
 # 3. Convert to binary predictions ("Investment" vs "Speculative") using a 0.5 threshold
 predicted_binary_labels <- ifelse(prob_investment_grade >= 0.5, "Investment", "Speculative")
 predicted_binary_labels <- factor(predicted_binary_labels, levels = c("Investment", "Speculative"))
 
-# 4. Determine true binary labels from test_rating
-true_binary_labels <- ifelse(test_rating$Rating %in% investment_grade_ratings, "Investment", "Speculative")
+# 4. Determine true binary labels from the *valid* subset of original test_rating
+# Use the original test_rating here for true labels, but only for rows that were valid for prediction
+original_valid_ratings <- test_rating$Rating[valid_pred_rows]
+true_binary_labels <- ifelse(original_valid_ratings %in% investment_grade_ratings, "Investment", "Speculative")
 true_binary_labels <- factor(true_binary_labels, levels = c("Investment", "Speculative"))
 
 # 5. Compute and print confusion matrix and metrics
